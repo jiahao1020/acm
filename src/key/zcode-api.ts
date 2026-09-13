@@ -4,6 +4,7 @@ import { homeDir } from "../utils/paths";
 import { readJsonFile } from "../utils/json";
 import { writeTextAtomic } from "../utils/atomic-write";
 import { ApiConfigAdapter } from "./api-adapter";
+import { readProviderGateway, enabledOnly } from "./provider-gateway";
 
 /**
  * ZCode stores API providers at ~/.zcode/v2/config.json under the nested
@@ -42,31 +43,8 @@ export class ZCodeApiAdapter implements ApiConfigAdapter {
     const p = this.getConfigPath();
     if (!p) return null;
     const raw = readJsonFile(p) as Record<string, unknown> | null;
-    const providers = raw?.provider as Record<string, unknown> | undefined;
-    if (!providers) return null;
-
-    // If providerName given, check that entry first
-    if (providerName && providers[providerName]) {
-      const e = providers[providerName] as Record<string, unknown>;
-      const opts = e.options as Record<string, unknown> | undefined;
-      if (opts) {
-        const baseUrl = typeof opts.baseURL === "string" ? opts.baseURL : undefined;
-        const apiKey = typeof opts.apiKey === "string" ? opts.apiKey : undefined;
-        if (baseUrl) return { baseUrl, apiKey };
-      }
-    }
-
-    // Fallback: first enabled provider with a valid baseURL
-    for (const [, entry] of Object.entries(providers)) {
-      if (!entry || typeof entry !== "object") continue;
-      const e = entry as Record<string, unknown>;
-      const opts = e.options as Record<string, unknown> | undefined;
-      if (!opts) continue;
-      const baseUrl = typeof opts.baseURL === "string" ? opts.baseURL : undefined;
-      const apiKey = typeof opts.apiKey === "string" ? opts.apiKey : undefined;
-      if (baseUrl && e.enabled !== false) return { baseUrl, apiKey };
-    }
-    return null;
+    // A provider the user turned off must not be reported as the active gateway.
+    return readProviderGateway(raw, providerName, enabledOnly);
   }
 
   writeGateway(cfg: {

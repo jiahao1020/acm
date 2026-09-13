@@ -3,7 +3,7 @@ import * as path from "path";
 import { homeDir } from "../utils/paths";
 import { readJsonFile } from "../utils/json";
 import { writeTextAtomic } from "../utils/atomic-write";
-import { mergeServerEntry } from "../utils/merge-server";
+import { mergeServersMap } from "../utils/merge-server";
 import {
   ClientAdapter,
   McpConfig,
@@ -86,11 +86,7 @@ export class ZCodeAdapter implements ClientAdapter {
       mcp.servers && typeof mcp.servers === "object" && !Array.isArray(mcp.servers)
         ? (mcp.servers as Record<string, McpServerConfig>)
         : {};
-    const next: Record<string, McpServerConfig> = {};
-    for (const [name, server] of Object.entries(config.mcpServers)) {
-      next[name] = mergeServerEntry(prior[name], server);
-    }
-    mcp.servers = next;
+    mcp.servers = mergeServersMap(prior, config.mcpServers);
     raw.mcp = mcp;
 
     writeTextAtomic(p, JSON.stringify(raw, null, 2) + "\n");

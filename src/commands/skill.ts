@@ -10,33 +10,14 @@ import { SkillAdapter } from "../skills/skill-adapter";
 import { gitRepoName, isSafeSkillName, resolveSkillName } from "../skills/skill-name";
 import { listSkillDirs, isSkillDir } from "../utils/fs-copy";
 import { SkillDigestCache } from "../utils/skill-digest";
-import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
+import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-/**
- * Resolve the `--client` option against detected clients.
- * Returns null (after reporting) when an id matches nothing or the value holds
- * no ids at all, so callers can bail out instead of acting on a silently
- * narrowed (or silently widened) list.
- */
-function resolveTargets(clientOpt?: string): SkillAdapter[] | null {
-  const available = getSelectedSkillAdapters();
-  const { targets, unknown, empty } = selectClientIds(available, clientOpt);
-  if (empty) {
-    prompts.log.error(emptyClientMessage(available));
-    process.exitCode = 1;
-    return null;
-  }
-  if (unknown.length > 0) {
-    prompts.log.error(unknownClientMessage(unknown, available));
-    process.exitCode = 1;
-    return null;
-  }
-  return targets;
-}
+const resolveTargets = (clientOpt?: string): SkillAdapter[] | null =>
+  resolveClientTargets(getSelectedSkillAdapters(), clientOpt);
 
 /** Build skill name → set of client ids that have it. */
 function buildMatrix(clients: SkillAdapter[]): Map<string, Set<string>> {
@@ -418,7 +399,7 @@ async function skillSync(opts: {
           console.log(`  ${chalk.green("✓")} ${step.name} → ${target.displayName}`);
           ok++;
         } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = errorMessage(err);
           console.log(
             `  ${chalk.red("✗")} ${step.name} → ${target.displayName}  ${chalk.dim(msg)}`
           );
@@ -473,7 +454,7 @@ async function skillInstall(
       spinner.stop("Cloned.");
     } catch (err: unknown) {
       spinner.stop("Clone failed.");
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       prompts.log.error(msg);
       fs.rmSync(tempDir, { recursive: true, force: true });
       return;
@@ -482,7 +463,7 @@ async function skillInstall(
     try {
       srcDir = locateSkillInRepo(tempDir, opts.name);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       prompts.log.error(msg);
       fs.rmSync(tempDir, { recursive: true, force: true });
       return;
@@ -583,7 +564,7 @@ async function skillInstall(
       console.log(`  ${chalk.green("✓")} ${client.displayName}`);
       ok++;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(msg)}`);
     }
   }

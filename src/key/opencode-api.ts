@@ -4,6 +4,7 @@ import { homeDir } from "../utils/paths";
 import { readJsonFile } from "../utils/json";
 import { writeTextAtomic } from "../utils/atomic-write";
 import { ApiConfigAdapter } from "./api-adapter";
+import { readProviderGateway, alwaysUsable } from "./provider-gateway";
 
 /**
  * OpenCode stores API providers at ~/.config/opencode/opencode.json:
@@ -40,31 +41,8 @@ export class OpenCodeApiAdapter implements ApiConfigAdapter {
     const p = this.getConfigPath();
     if (!p) return null;
     const raw = readJsonFile(p) as Record<string, unknown> | null;
-    const providers = raw?.provider as Record<string, unknown> | undefined;
-    if (!providers) return null;
-
-    // If providerName given, check that entry first
-    if (providerName && providers[providerName]) {
-      const e = providers[providerName] as Record<string, unknown>;
-      const opts = e.options as Record<string, unknown> | undefined;
-      if (opts) {
-        const baseUrl = typeof opts.baseURL === "string" ? opts.baseURL : undefined;
-        const apiKey = typeof opts.apiKey === "string" ? opts.apiKey : undefined;
-        if (baseUrl) return { baseUrl, apiKey };
-      }
-    }
-
-    // Fallback: first provider with a valid baseURL
-    for (const [, entry] of Object.entries(providers)) {
-      if (!entry || typeof entry !== "object") continue;
-      const e = entry as Record<string, unknown>;
-      const opts = e.options as Record<string, unknown> | undefined;
-      if (!opts) continue;
-      const baseUrl = typeof opts.baseURL === "string" ? opts.baseURL : undefined;
-      const apiKey = typeof opts.apiKey === "string" ? opts.apiKey : undefined;
-      if (baseUrl) return { baseUrl, apiKey };
-    }
-    return null;
+    // OpenCode providers carry no `enabled` flag, so any with a baseURL counts.
+    return readProviderGateway(raw, providerName, alwaysUsable);
   }
 
   writeGateway(cfg: {

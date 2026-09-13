@@ -7,7 +7,7 @@ import {
   McpServerConfig,
   OptionalCapability,
 } from "../types";
-import { mergeServerEntry } from "../utils/merge-server";
+import { mergeServersMap } from "../utils/merge-server";
 
 /**
  * Shared implementation for clients that store MCP servers as a plain
@@ -71,11 +71,10 @@ export abstract class StandardJsonAdapter implements ClientAdapter {
       const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
       // Merge per entry so client-specific keys we do not model (and keys this
       // adapter cannot express) survive the rewrite.
-      const next: Record<string, McpServerConfig> = {};
-      for (const [name, server] of Object.entries(config.mcpServers)) {
-        next[name] = mergeServerEntry(prior[name], server);
-      }
-      writeJsonFile(p, { ...existing, mcpServers: next });
+      writeJsonFile(p, {
+        ...existing,
+        mcpServers: mergeServersMap(prior, config.mcpServers),
+      });
     }
   }
 

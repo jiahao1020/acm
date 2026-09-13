@@ -10,33 +10,14 @@ import {
 } from "../utils/gateway";
 import { getSelectedApiAdapters } from "../key/registry";
 import { ApiConfigAdapter } from "../key/api-adapter";
-import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
+import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-/**
- * Resolve the `--client` option against detected clients.
- * Returns null (after reporting) when an id matches nothing or the value holds
- * no ids at all, so callers can bail out instead of acting on a silently
- * narrowed (or silently widened) list.
- */
-function resolveTargets(clientOpt?: string): ApiConfigAdapter[] | null {
-  const available = getSelectedApiAdapters();
-  const { targets, unknown, empty } = selectClientIds(available, clientOpt);
-  if (empty) {
-    prompts.log.error(emptyClientMessage(available));
-    process.exitCode = 1;
-    return null;
-  }
-  if (unknown.length > 0) {
-    prompts.log.error(unknownClientMessage(unknown, available));
-    process.exitCode = 1;
-    return null;
-  }
-  return targets;
-}
+const resolveTargets = (clientOpt?: string): ApiConfigAdapter[] | null =>
+  resolveClientTargets(getSelectedApiAdapters(), clientOpt);
 
 /**
  * Explain that no client can take the gateway via a file.
@@ -130,7 +111,7 @@ async function keyApply(opts: {
       }
       successCount++;
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(msg)}`);
       failureCount++;
     }

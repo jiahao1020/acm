@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { appDataDir } from "../utils/paths";
 import { readJsonFile, writeJsonFile } from "../utils/json";
-import { mergeServerEntry } from "../utils/merge-server";
+import { mergeServersMap } from "../utils/merge-server";
 import { ClientAdapter, McpConfig, McpServerConfig, OptionalCapability } from "../types";
 
 export class ClaudeDesktopAdapter implements ClientAdapter {
@@ -46,11 +46,10 @@ export class ClaudeDesktopAdapter implements ClientAdapter {
     // common model does not know about.
     const existing = readJsonFile(p) ?? {};
     const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
-    const next: Record<string, McpServerConfig> = {};
-    for (const [name, server] of Object.entries(config.mcpServers)) {
-      next[name] = mergeServerEntry(prior[name], server);
-    }
-    writeJsonFile(p, { ...existing, mcpServers: next });
+    writeJsonFile(p, {
+      ...existing,
+      mcpServers: mergeServersMap(prior, config.mcpServers),
+    });
   }
 
   /** Claude Desktop launches stdio servers only, so remote entries are skipped. */

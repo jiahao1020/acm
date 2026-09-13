@@ -43,6 +43,25 @@ export function mergeServerEntry(
 }
 
 /**
+ * Merge a whole `mcpServers` object into the one already on disk.
+ *
+ * A write replaces the entire map, so every adapter that stores servers in a
+ * plain object needs this same step. Keeping it in one place means the
+ * no-silent-data-loss rule is enforced once rather than nine times: each
+ * adapter that hand-rolled this loop was a place the rule could quietly regress.
+ */
+export function mergeServersMap(
+  onDisk: Record<string, McpServerConfig> | undefined,
+  incoming: Record<string, McpServerConfig>
+): Record<string, McpServerConfig> {
+  const next: Record<string, McpServerConfig> = {};
+  for (const [name, server] of Object.entries(incoming)) {
+    next[name] = mergeServerEntry(onDisk?.[name], server);
+  }
+  return next;
+}
+
+/**
  * Report the fields an adapter cannot persist, so the caller can warn instead
  * of letting `acm mcp add --cwd /work` look like it worked.
  *

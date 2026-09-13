@@ -4,7 +4,7 @@ import { stringify as stringifyToml } from "smol-toml";
 import { homeDir } from "../utils/paths";
 import { readTomlFile } from "../utils/toml";
 import { writeTextAtomic } from "../utils/atomic-write";
-import { mergeServerEntry } from "../utils/merge-server";
+import { mergeServersMap } from "../utils/merge-server";
 import {
   ClientAdapter,
   McpConfig,
@@ -68,11 +68,7 @@ export class CodexAdapter implements ClientAdapter {
     const parsed = readTomlFile(p) ?? {};
     const prior = (parsed.mcp_servers as Record<string, McpServerConfig>) ?? {};
     // Merge per entry so a Codex-only key (e.g. `startup_timeout_ms`) survives.
-    const next: Record<string, McpServerConfig> = {};
-    for (const [name, server] of Object.entries(config.mcpServers)) {
-      next[name] = mergeServerEntry(prior[name], server);
-    }
-    parsed.mcp_servers = next;
+    parsed.mcp_servers = mergeServersMap(prior, config.mcpServers);
 
     writeTextAtomic(p, stringifyToml(parsed) + "\n");
   }

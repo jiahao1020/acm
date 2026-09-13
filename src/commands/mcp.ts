@@ -3,7 +3,7 @@ import chalk from "chalk";
 import * as prompts from "@clack/prompts";
 import { getSelectedAdapters } from "../clients/registry";
 import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
-import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
+import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
 import { unsupportedFields } from "../utils/merge-server";
 import { AddArgs, parseAddArgs, rawAddTokens } from "./add-args";
 
@@ -11,31 +11,8 @@ import { AddArgs, parseAddArgs, rawAddTokens } from "./add-args";
 /*  Helpers                                                           */
 /* ------------------------------------------------------------------ */
 
-/**
- * Resolve the `--client` option against tracked clients.
- * Returns null (after reporting) when an id matches nothing or the value holds
- * no ids at all, so callers can bail out instead of acting on a silently
- * narrowed (or silently widened) list.
- */
-function resolveTargets(clientOpt?: string): ClientAdapter[] | null {
-  const available = getSelectedAdapters();
-  const { targets, unknown, empty } = selectClientIds(available, clientOpt);
-  if (empty) {
-    prompts.log.error(emptyClientMessage(available));
-    process.exitCode = 1;
-    return null;
-  }
-  if (unknown.length > 0) {
-    prompts.log.error(unknownClientMessage(unknown, available));
-    process.exitCode = 1;
-    return null;
-  }
-  return targets;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const resolveTargets = (clientOpt?: string): ClientAdapter[] | null =>
+  resolveClientTargets(getSelectedAdapters(), clientOpt);
 
 function serverSummary(s: McpServerConfig): string {
   if (s.url) return chalk.cyan(`[remote] ${s.url}`);

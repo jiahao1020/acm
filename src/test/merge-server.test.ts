@@ -1,6 +1,46 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mergeServerEntry, unsupportedFields } from "../utils/merge-server";
+import {
+  mergeServerEntry,
+  mergeServersMap,
+  unsupportedFields,
+} from "../utils/merge-server";
+
+/* ------------------------------------------------------------------ */
+/*  mergeServersMap: the whole-map form used on every write             */
+/* ------------------------------------------------------------------ */
+
+test("mergeServersMap keeps disk-only entries and merges shared ones", () => {
+  const merged = mergeServersMap(
+    {
+      kept: { command: "old", custom: "keep" },
+      shared: { command: "old", env: { A: "1" } },
+    },
+    {
+      shared: { command: "new", env: { B: "2" } },
+      added: { command: "added" },
+    }
+  );
+
+  assert.deepEqual(Object.keys(merged).sort(), ["added", "shared"]);
+  assert.deepEqual(merged.shared, { command: "new", env: { A: "1", B: "2" } });
+  assert.equal(merged.added.command, "added");
+});
+
+test("mergeServersMap treats a missing on-disk map as empty", () => {
+  const merged = mergeServersMap(undefined, { a: { command: "c" } });
+  assert.deepEqual(merged, { a: { command: "c" } });
+});
+
+test("mergeServersMap returns a fresh object rather than mutating its inputs", () => {
+  const onDisk = { a: { command: "old" } };
+  const incoming = { a: { command: "new" } };
+  const merged = mergeServersMap(onDisk, incoming);
+
+  assert.equal(onDisk.a.command, "old", "the on-disk map must not be touched");
+  assert.equal(incoming.a.command, "new");
+  assert.notEqual(merged.a, onDisk.a, "entries must be copies");
+});
 
 /* ------------------------------------------------------------------ */
 /*  mergeServerEntry: never lose keys we do not model                   */
