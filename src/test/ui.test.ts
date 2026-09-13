@@ -5,7 +5,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { column, listNames, supportedList } from "../utils/ui";
+import { column, supportedList } from "../utils/ui";
 
 test("column pads every name to the longest one", () => {
   const label = column(["Cursor", "Claude Desktop", "Codex"], (s) => s);
@@ -35,19 +35,6 @@ test("column handles a single item and an empty list", () => {
 test("column reads the name through the accessor, not the item", () => {
   const label = column([{ id: "cursor", displayName: "Cursor" }], (c) => c.displayName);
   assert.equal(label({ id: "cursor", displayName: "Cursor" }), "Cursor");
-});
-
-test("listNames joins a short list without summarising", () => {
-  assert.equal(listNames(["a", "b", "c"]), "a, b, c");
-});
-
-test("listNames summarises past the limit instead of truncating mid-word", () => {
-  const names = ["a", "b", "c", "d"];
-  assert.equal(listNames(names, 2), "a, b, … (2 more)");
-});
-
-test("listNames summarises exactly one past the limit", () => {
-  assert.equal(listNames(["a", "b", "c"], 2), "a, b, … (1 more)");
 });
 
 test("supportedList is sorted, so the message does not depend on registry order", () => {

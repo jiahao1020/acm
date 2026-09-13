@@ -453,42 +453,41 @@ export async function mcpSync(
     return;
   }
 
+  // Per server, not per client: the plan is keyed by client but the report is
+  // about which servers actually landed. `fanOut` counts clients, so the
+  // per-server success count is tallied inside the action and carried out in
+  // `pushed` — a client whose write throws pushes nothing and is counted as
+  // one failure by fanOut, which is the granularity the summary reports.
   let ok = 0;
-  let failed = 0;
-  for (const [id, names] of plan) {
-    const client = clients.find((c) => c.id === id);
-    if (!client) continue;
-
-    const cfg = configs.get(id)!;
-    // Resolve every entry before writing anything: a name missing from
-    // `serverByName` would otherwise land in the config as `undefined`, which
-    // JSON.stringify drops silently and TOML serialisers skip — a "pushed"
-    // report for a server that was never written.
-    const toWrite: [string, McpServerConfig][] = [];
-    for (const name of names) {
-      const server = serverByName.get(name);
-      if (!server) continue;
-      toWrite.push([name, server]);
-      cfg.mcpServers[name] = server;
-    }
-    if (toWrite.length === 0) continue;
-
-    try {
-      client.writeConfig(cfg);
-      for (const [name] of toWrite) {
-        console.log(`  ${chalk.green("✓")} Pushed "${name}" → ${client.displayName}`);
-        ok++;
+  const counts = fanOut(
+    [...plan].flatMap(([id]) => clients.filter((c) => c.id === id)),
+    (client) => {
+      const cfg = configs.get(client.id)!;
+      // Resolve every entry before writing anything: a name missing from
+      // `serverByName` would otherwise land in the config as `undefined`, which
+      // JSON.stringify drops silently and TOML serialisers skip — a "pushed"
+      // report for a server that was never written.
+      const toWrite: [string, McpServerConfig][] = [];
+      for (const name of plan.get(client.id)!) {
+        const server = serverByName.get(name);
+        if (!server) continue;
+        toWrite.push([name, server]);
+        cfg.mcpServers[name] = server;
       }
-    } catch (err: unknown) {
-      // One locked or unreadable config must not abort the remaining clients.
-      console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(errorMessage(err))}`);
-      failed += toWrite.length;
+      if (toWrite.length === 0) return { status: "skipped", reason: "nothing to push" };
+
+      client.writeConfig(cfg);
+      ok += toWrite.length;
+      return {
+        status: "done",
+        detail: toWrite.map(([n]) => n).join(", "),
+      };
     }
-  }
+  );
 
   console.log();
-  if (failed > 0) {
-    prompts.log.warn(`Synced ${ok} server(s), ${failed} failed.`);
+  if (counts.failed > 0) {
+    prompts.log.warn(`Synced ${ok} server(s), ${counts.failed} client(s) failed.`);
     process.exitCode = 1;
   } else {
     prompts.log.success(`Synced ${ok} server(s).`);

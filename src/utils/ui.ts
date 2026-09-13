@@ -31,12 +31,6 @@ export function column<T>(
   return (item: T) => toName(item).padEnd(width);
 }
 
-/** `a, b, c` — with the tail summarised rather than truncated mid-word. */
-export function listNames(names: string[], limit = 20): string {
-  if (names.length <= limit) return names.join(", ");
-  return `${names.slice(0, limit).join(", ")}, … (${names.length - limit} more)`;
-}
-
 /**
  * The "Supported: …" sentence, built from the live adapter list.
  *
