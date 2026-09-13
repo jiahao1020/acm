@@ -11,6 +11,7 @@ import { gitRepoName, isSafeSkillName, resolveSkillName } from "../skills/skill-
 import { listSkillDirs, isSkillDir } from "../utils/fs-copy";
 import { SkillDigestCache } from "../utils/skill-digest";
 import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
+import { fanOut } from "../utils/fan-out";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -393,19 +394,12 @@ async function skillSync(opts: {
     for (const step of steps) {
       const srcDir = step.from.findSkill(step.name);
       if (!srcDir) continue;
-      for (const target of step.to) {
-        try {
-          target.installSkill(step.name, srcDir, force);
-          console.log(`  ${chalk.green("✓")} ${step.name} → ${target.displayName}`);
-          ok++;
-        } catch (err: unknown) {
-          const msg = errorMessage(err);
-          console.log(
-            `  ${chalk.red("✗")} ${step.name} → ${target.displayName}  ${chalk.dim(msg)}`
-          );
-          fail++;
-        }
-      }
+      const counts = fanOut(step.to, (target) => {
+        target.installSkill(step.name, srcDir, force);
+        return { status: "done", detail: `→ ${step.name}` };
+      });
+      ok += counts.done;
+      fail += counts.failed;
     }
   };
 
@@ -557,22 +551,15 @@ async function skillInstall(
     chalk.bold(`\nInstalling ${chalk.cyan(skillName)} into ${targets.length} client(s):\n`)
   );
 
-  let ok = 0;
-  for (const client of targets) {
-    try {
-      client.installSkill(skillName, srcDir, opts.force ?? false);
-      console.log(`  ${chalk.green("✓")} ${client.displayName}`);
-      ok++;
-    } catch (err: unknown) {
-      const msg = errorMessage(err);
-      console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(msg)}`);
-    }
-  }
+  const counts = fanOut(targets, (client) => {
+    client.installSkill(skillName, srcDir, opts.force ?? false);
+    return { status: "done" };
+  });
 
   if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
 
   console.log();
-  if (ok > 0) prompts.log.success(`Installed "${skillName}" to ${ok} client(s).`);
+  if (counts.done > 0) prompts.log.success(`Installed "${skillName}" to ${counts.done} client(s).`);
   else {
     prompts.log.warn("Nothing installed.");
     process.exitCode = 1;
@@ -617,16 +604,14 @@ async function skillRemove(
     }
   }
 
-  let ok = 0;
-  for (const client of targets) {
-    if (client.removeSkill(name)) {
-      console.log(`  ${chalk.green("✓")} ${client.displayName}  removed`);
-      ok++;
-    }
-  }
+  const counts = fanOut(targets, (client) =>
+    client.removeSkill(name)
+      ? { status: "done", detail: "removed" }
+      : { status: "skipped", reason: "not present" }
+  );
 
   console.log();
-  if (ok > 0) prompts.log.success(`Removed "${name}" from ${ok} client(s).`);
+  if (counts.done > 0) prompts.log.success(`Removed "${name}" from ${counts.done} client(s).`);
 }
 
 /* ------------------------------------------------------------------ */

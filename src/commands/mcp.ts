@@ -4,6 +4,7 @@ import * as prompts from "@clack/prompts";
 import { getSelectedAdapters } from "../clients/registry";
 import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
 import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
+import { fanOut, summarise } from "../utils/fan-out";
 import { unsupportedFields } from "../utils/merge-server";
 import { AddArgs, parseAddArgs, rawAddTokens } from "./add-args";
 
@@ -187,102 +188,66 @@ async function mcpAdd(args: AddArgs): Promise<void> {
     }
   }
 
-  if (args.dryRun) {
-    console.log(chalk.bold(`\nDry-run — no files written:\n`));
-  }
-
-  let added = 0;
-  let updated = 0;
-  let unchanged = 0;
-  let conflicts = 0;
-  let skipped = 0;
-  let failed = 0;
   /** Clients that took the server but cannot store one of the given fields. */
-  let warned = 0;
+  const warned: string[] = [];
 
-  for (const client of targets) {
-    // A remote server cannot be expressed by clients that only speak stdio.
-    if (args.url && !client.supportsRemote()) {
-      console.log(
-        `  ${chalk.yellow("–")} ${client.displayName}  ${chalk.dim("does not support remote (HTTP) servers — skipped")}`
-      );
-      skipped++;
-      continue;
-    }
+  const counts = fanOut(
+    targets,
+    (client) => {
+      // A remote server cannot be expressed by clients that only speak stdio.
+      if (args.url && !client.supportsRemote()) {
+        return { status: "skipped", reason: "does not support remote (HTTP) servers" };
+      }
 
-    // Fields this client's schema has no place for would be written and then
-    // ignored by the client; surface that instead of silently losing them.
-    const dropped = unsupportedFields(server, client.capabilities?.());
-
-    try {
       const cfg = client.readConfig();
       const existing = cfg.mcpServers[args.name];
 
-      if (existing && sameServer(existing, server)) {
-        console.log(`  ${chalk.dim("·")} ${client.displayName}  ${chalk.dim("already up to date")}`);
-        unchanged++;
-        continue;
-      }
+      if (existing && sameServer(existing, server)) return { status: "unchanged" };
       if (existing && !args.force) {
-        console.log(
-          `  ${chalk.yellow("⚠")} ${client.displayName}  ${chalk.dim("already exists with different settings — skipped (use --force to overwrite)")}`
-        );
-        conflicts++;
-        continue;
+        return {
+          status: "conflict",
+          reason: "already exists with different settings — use --force to overwrite",
+        };
       }
       if (args.dryRun) {
-        console.log(
-          `  ${chalk.blue("→")} ${client.displayName}  ${chalk.dim(existing ? "would overwrite" : "would add")}`
-        );
-        if (existing) updated++;
-        else added++;
-        continue;
+        return { status: "done", detail: existing ? "would overwrite" : "would add" };
       }
 
       cfg.mcpServers[args.name] = server;
       client.writeConfig(cfg);
-      console.log(`  ${chalk.green("✓")} ${client.displayName}`);
+
+      // Fields this client's schema has no place for were written and will be
+      // ignored by the client; surface that instead of silently losing them.
+      const dropped = unsupportedFields(server, client.capabilities?.());
       if (dropped.length > 0) {
-        console.log(
-          `      ${chalk.yellow("⚠")} ${chalk.dim(`ignores ${dropped.join(", ")} — not stored by this client`)}`
-        );
-        warned++;
+        warned.push(`${client.displayName} (${dropped.join(", ")})`);
       }
-      if (existing) updated++;
-      else added++;
-    } catch (err: unknown) {
-      console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(errorMessage(err))}`);
-      failed++;
-    }
-  }
+      return { status: "done" };
+    },
+    { dryRun: args.dryRun }
+  );
+
+  const { done: written, unchanged, conflict: conflicts, skipped, failed } = counts;
+  const notes = summarise([
+    unchanged ? `${unchanged} already up to date` : "",
+    conflicts ? `${conflicts} conflicting` : "",
+    warned.length > 0 ? `${warned.length} with unsupported fields` : "",
+    skipped ? `${skipped} skipped` : "",
+    failed ? `${failed} failed` : "",
+  ]);
 
   console.log();
-  const written = added + updated;
-  const verb = args.dryRun ? "Would write" : "Wrote";
   if (args.dryRun) {
-    prompts.log.info(
-      `${verb} "${args.name}" to ${written} client(s)` +
-        (unchanged ? `, ${unchanged} already up to date` : "") +
-        (conflicts ? `, ${conflicts} conflicting` : "") +
-        (skipped ? `, ${skipped} skipped` : "") +
-        (failed ? `, ${failed} failed` : "") +
-        "."
-    );
+    prompts.log.info(`Would write "${args.name}" to ${written} client(s)${notes ? `, ${notes}` : ""}.`);
     if (conflicts > 0 || failed > 0) process.exitCode = 1;
     return;
   }
 
   if (written > 0) {
-    prompts.log.success(
-      `Added "${args.name}" to ${written} client(s)` +
-        (unchanged ? ` (${unchanged} already up to date)` : "") +
-        (skipped ? ` (${skipped} skipped)` : "") +
-        (failed ? ` (${failed} failed)` : "") +
-        "."
-    );
-    if (warned > 0) {
+    prompts.log.success(`Added "${args.name}" to ${written} client(s)${notes ? ` (${notes})` : ""}.`);
+    if (warned.length > 0) {
       prompts.log.warn(
-        `${warned} client(s) do not store every field — see the ⚠ notes above. Re-run with --client to limit the targets.`
+        `${warned.length} client(s) do not store every field: ${warned.join("; ")}. Re-run with --client to limit the targets.`
       );
     }
     if (conflicts > 0) {
@@ -325,33 +290,21 @@ async function mcpRemove(
     return;
   }
 
-  let affected = 0;
-  let missing = 0;
-  let failed = 0;
-
-  for (const client of targets) {
-    try {
+  const counts = fanOut(
+    targets,
+    (client) => {
       const cfg = client.readConfig();
-      if (!cfg.mcpServers[name]) {
-        console.log(`  ${chalk.dim("·")} ${client.displayName}  ${chalk.dim("not found")}`);
-        missing++;
-        continue;
-      }
-      if (opts.dryRun) {
-        console.log(`  ${chalk.blue("→")} ${client.displayName}  ${chalk.dim("would remove")}`);
-        affected++;
-        continue;
-      }
+      if (!cfg.mcpServers[name]) return { status: "skipped", reason: "not found" };
+      if (opts.dryRun) return { status: "done", detail: "would remove" };
+
       delete cfg.mcpServers[name];
       client.writeConfig(cfg);
-      console.log(`  ${chalk.green("✓")} ${client.displayName}  removed`);
-      affected++;
-    } catch (err: unknown) {
-      console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(errorMessage(err))}`);
-      failed++;
-    }
-  }
+      return { status: "done", detail: "removed" };
+    },
+    { dryRun: opts.dryRun }
+  );
 
+  const { done: affected, skipped: missing, failed } = counts;
   console.log();
   if (opts.dryRun) {
     prompts.log.info(`Would remove "${name}" from ${affected} client(s).`);

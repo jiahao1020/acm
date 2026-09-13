@@ -10,7 +10,8 @@ import {
 } from "../utils/gateway";
 import { getSelectedApiAdapters } from "../key/registry";
 import { ApiConfigAdapter } from "../key/api-adapter";
-import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
+import { resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
+import { fanOut } from "../utils/fan-out";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -93,30 +94,21 @@ async function keyApply(opts: {
     chalk.bold(`\nApplying gateway ${chalk.cyan(gw.url)} to ${targets.length} client(s):\n`)
   );
 
-  let successCount = 0;
-  let failureCount = 0;
-  for (const client of targets) {
-    try {
-      if (opts.dryRun) {
-        console.log(
-          `  ${chalk.blue("→")} ${client.displayName.padEnd(18)} ${chalk.dim("[dry-run]")} ${gw.url}`
-        );
-      } else {
-        client.writeGateway({
-          baseUrl: gw.url,
-          apiKey: gw.key,
-          providerName: gw.providerName,
-        });
-        console.log(`  ${chalk.green("✓")} ${client.displayName}`);
-      }
-      successCount++;
-    } catch (err: unknown) {
-      const msg = errorMessage(err);
-      console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(msg)}`);
-      failureCount++;
-    }
-  }
+  const counts = fanOut(
+    targets,
+    (client) => {
+      if (opts.dryRun) return { status: "done", detail: gw.url };
+      client.writeGateway({
+        baseUrl: gw.url,
+        apiKey: gw.key,
+        providerName: gw.providerName,
+      });
+      return { status: "done" };
+    },
+    { dryRun: opts.dryRun }
+  );
 
+  const { done: successCount, failed: failureCount } = counts;
   console.log();
   if (opts.dryRun) {
     prompts.log.info(`Dry-run complete. Would apply to ${successCount} client(s).`);
