@@ -8,15 +8,22 @@ import * as path from "path";
  * Adapters resolve paths through homeDir() at call time, which reads
  * HOME/USERPROFILE, so this covers POSIX and Windows without patching
  * os.homedir (which @types/node declares read-only).
+ *
+ * An async callback is awaited before the directory is removed: deleting it
+ * first left a still-running command writing into a path that no longer
+ * existed, which surfaced as an unhandled rejection after the test had already
+ * passed.
  */
-export function withFakeHome(fn: (home: string) => void): void {
+export async function withFakeHome(
+  fn: (home: string) => void | Promise<void>
+): Promise<void> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "acm-home-"));
   const savedHome = process.env.HOME;
   const savedProfile = process.env.USERPROFILE;
   process.env.HOME = home;
   process.env.USERPROFILE = home;
   try {
-    fn(home);
+    await fn(home);
   } finally {
     if (savedHome === undefined) delete process.env.HOME;
     else process.env.HOME = savedHome;

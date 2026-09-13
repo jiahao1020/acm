@@ -397,7 +397,8 @@ async function mcpRemove(
 /*  acm mcp sync                                                      */
 /* ------------------------------------------------------------------ */
 
-async function mcpSync(
+/** Exported for tests: `sync` must never write an unresolved server entry. */
+export async function mcpSync(
   opts: { yes?: boolean; dryRun?: boolean } = {}
 ): Promise<void> {
   const clients = getSelectedAdapters();
@@ -520,20 +521,29 @@ async function mcpSync(
     if (!client) continue;
 
     const cfg = configs.get(id)!;
+    // Resolve every entry before writing anything: a name missing from
+    // `serverByName` would otherwise land in the config as `undefined`, which
+    // JSON.stringify drops silently and TOML serialisers skip — a "pushed"
+    // report for a server that was never written.
+    const toWrite: [string, McpServerConfig][] = [];
     for (const name of names) {
-      cfg.mcpServers[name] = serverByName.get(name)!;
+      const server = serverByName.get(name);
+      if (!server) continue;
+      toWrite.push([name, server]);
+      cfg.mcpServers[name] = server;
     }
+    if (toWrite.length === 0) continue;
 
     try {
       client.writeConfig(cfg);
-      for (const name of names) {
+      for (const [name] of toWrite) {
         console.log(`  ${chalk.green("✓")} Pushed "${name}" → ${client.displayName}`);
         ok++;
       }
     } catch (err: unknown) {
       // One locked or unreadable config must not abort the remaining clients.
       console.log(`  ${chalk.red("✗")} ${client.displayName}  ${chalk.dim(errorMessage(err))}`);
-      failed += names.length;
+      failed += toWrite.length;
     }
   }
 
