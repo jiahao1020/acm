@@ -1,6 +1,14 @@
 /** MCP server configuration (stdio or remote) */
 export interface McpServerConfig {
-  /** "stdio" for local servers, "http"/"sse" for remote ones */
+  /**
+   * Transport discriminator, **derived** rather than user-supplied: an entry
+   * with a `url` is remote, otherwise it is stdio. Adapters that store a
+   * transport field (OpenCode's `type: "local" | "remote"`) write it
+   * themselves; the others ignore it.
+   *
+   * It is deliberately not part of `OPTIONAL_CAPABILITIES`: reporting it as an
+   * "unsupported field" would warn about something the user never asked for.
+   */
   type?: string;
   command?: string;
   args?: string[];

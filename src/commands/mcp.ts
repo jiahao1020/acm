@@ -181,7 +181,10 @@ async function mcpAdd(args: AddArgs): Promise<void> {
   const server: McpServerConfig = {};
   if (args.url) {
     server.url = args.url;
-    server.type = "http";
+    // `type` is intentionally not set here: it is derived from `url` by the
+    // adapters that need it (OpenCode writes `type: "remote"` itself) and is
+    // ignored by every other client. Setting it here made it look like part of
+    // the common model while no adapter read it, so it was dropped in silence.
   } else if (args.command.length > 0) {
     server.command = args.command[0];
     server.args = args.command.slice(1);
