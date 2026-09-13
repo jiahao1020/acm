@@ -7,6 +7,7 @@ import { ClineAdapter } from "./cline";
 import { WindsurfAdapter } from "./windsurf";
 import { WorkbuddyAdapter } from "./workbuddy";
 import { CodexAdapter } from "./codex";
+import { HermesAdapter } from "./hermes";
 import { ZCodeAdapter } from "./zcode";
 import { OpenCodeAdapter } from "./open-code";
 import { SIMPLE_JSON_CLIENTS, SpecJsonAdapter } from "./simple-json-clients";
@@ -20,6 +21,7 @@ export function getAllAdapters(): ClientAdapter[] {
     new WindsurfAdapter(),
     new WorkbuddyAdapter(),
     new CodexAdapter(),
+    new HermesAdapter(),
     new ZCodeAdapter(),
     new OpenCodeAdapter(),
     ...SIMPLE_JSON_CLIENTS.map((spec) => new SpecJsonAdapter(spec)),

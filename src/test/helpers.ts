@@ -18,17 +18,23 @@ export async function withFakeHome(
   fn: (home: string) => void | Promise<void>
 ): Promise<void> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "acm-home-"));
-  const savedHome = process.env.HOME;
-  const savedProfile = process.env.USERPROFILE;
+  const saved = {
+    HOME: process.env.HOME,
+    USERPROFILE: process.env.USERPROFILE,
+    LOCALAPPDATA: process.env.LOCALAPPDATA,
+  };
   process.env.HOME = home;
   process.env.USERPROFILE = home;
+  // Hermes resolves its home from LOCALAPPDATA on Windows; without this it
+  // would read (and in a write test, overwrite) the real Hermes install.
+  process.env.LOCALAPPDATA = path.join(home, "AppData", "Local");
   try {
     await fn(home);
   } finally {
-    if (savedHome === undefined) delete process.env.HOME;
-    else process.env.HOME = savedHome;
-    if (savedProfile === undefined) delete process.env.USERPROFILE;
-    else process.env.USERPROFILE = savedProfile;
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     fs.rmSync(home, { recursive: true, force: true });
   }
 }

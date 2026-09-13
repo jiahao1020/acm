@@ -22,3 +22,27 @@ export function acmConfigDir(): string {
 export function acmConfigPath(): string {
   return path.join(acmConfigDir(), "config.json");
 }
+
+/**
+ * Hermes Agent's home directory.
+ *
+ * Unlike every other client acm supports, Hermes keeps its home under the
+ * platform's *local* app-data directory (Windows: `%LOCALAPPDATA%\hermes`,
+ * macOS: `~/Library/Application Support/hermes`, Linux: `~/.local/share/hermes`)
+ * rather than a dotfolder in `$HOME`. `~/.hermes` also exists on macOS/Linux
+ * but is not where `config.yaml` lives, so overriding it keeps every platform
+ * pointed at the real config.
+ */
+export function hermesHome(): string {
+  if (process.platform === "win32") {
+    return path.join(
+      process.env.LOCALAPPDATA || path.join(homeDir(), "AppData", "Local"),
+      "hermes"
+    );
+  }
+  if (process.platform === "darwin") {
+    return path.join(homeDir(), "Library", "Application Support", "hermes");
+  }
+  return path.join(homeDir(), ".local", "share", "hermes");
+}
+
