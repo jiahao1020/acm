@@ -21,6 +21,38 @@ export function digestSkillDir(dir: string): string {
   return hash.digest("hex");
 }
 
+/**
+ * Memoised `digestSkillDir`, keyed by absolute directory path.
+ *
+ * Digests are not cheap: the function reads every byte of the folder, and a
+ * real skills tree runs to tens of megabytes. Both `list` and `sync` ask for
+ * the same folder repeatedly — once per client holding it, plus once per
+ * client being compared against it — so without a cache a single run hashes the
+ * same folder several times over.
+ *
+ * The cache lives for one command run. Nothing writes into a skills root while
+ * a digest is being computed, so a path's content cannot change underneath it.
+ *
+ * `compute` is injectable so the deduplication itself is testable: `fs`'s
+ * methods are read-only getters on modern Node, so the number of filesystem
+ * passes cannot be observed by patching the fs module.
+ */
+export class SkillDigestCache {
+  private readonly byPath = new Map<string, string | null>();
+
+  constructor(
+    private readonly compute: (dir: string) => string = digestSkillDir
+  ) {}
+
+  /** Digest of `dir`, or null when the folder does not exist. */
+  of(dir: string): string | null {
+    if (!this.byPath.has(dir)) {
+      this.byPath.set(dir, fs.existsSync(dir) ? this.compute(dir) : null);
+    }
+    return this.byPath.get(dir)!;
+  }
+}
+
 function walk(dir: string, prefix: string, hash: crypto.Hash): void {
   let entries: fs.Dirent[];
   try {

@@ -9,7 +9,7 @@ import { getSelectedSkillAdapters } from "../skills/registry";
 import { SkillAdapter } from "../skills/skill-adapter";
 import { gitRepoName, isSafeSkillName, resolveSkillName } from "../skills/skill-name";
 import { listSkillDirs, isSkillDir } from "../utils/fs-copy";
-import { digestSkillDir } from "../utils/skill-digest";
+import { SkillDigestCache } from "../utils/skill-digest";
 import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
 
 /* ------------------------------------------------------------------ */
@@ -51,6 +51,23 @@ function buildMatrix(clients: SkillAdapter[]): Map<string, Set<string>> {
 }
 
 /**
+ * Narrow an existing matrix to a subset of clients, without re-listing any
+ * skills root. Names that no client in the subset holds are dropped.
+ */
+function restrictMatrix(
+  matrix: Map<string, Set<string>>,
+  clients: SkillAdapter[]
+): Map<string, Set<string>> {
+  const ids = new Set(clients.map((c) => c.id));
+  const narrowed = new Map<string, Set<string>>();
+  for (const [name, present] of matrix) {
+    const kept = new Set([...present].filter((id) => ids.has(id)));
+    if (kept.size > 0) narrowed.set(name, kept);
+  }
+  return narrowed;
+}
+
+/**
  * Skills that exist in more than one client but do not hold the same content.
  *
  * Name-level comparison cannot see these: a skill updated in one client keeps
@@ -71,7 +88,8 @@ interface SyncStep {
 
 function computeDrift(
   clients: SkillAdapter[],
-  matrix: Map<string, Set<string>>
+  matrix: Map<string, Set<string>>,
+  digests: SkillDigestCache
 ): SkillDrift[] {
   const drifted: SkillDrift[] = [];
 
@@ -83,7 +101,8 @@ function computeDrift(
     for (const client of holders) {
       const dir = client.findSkill(name);
       if (!dir) continue;
-      const digest = digestSkillDir(dir);
+      const digest = digests.of(dir);
+      if (digest === null) continue;
       if (!byDigest.has(digest)) byDigest.set(digest, []);
       byDigest.get(digest)!.push(client.id);
     }
@@ -180,7 +199,7 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
     if (present.size < compareClients.length) partial.push(name);
   }
 
-  const drift = computeDrift(compareClients, matrix);
+  const drift = computeDrift(compareClients, matrix, new SkillDigestCache());
 
   if (partial.length === 0 && drift.length === 0) {
     console.log();
@@ -280,6 +299,11 @@ async function skillSync(opts: {
   const missingPlan: SyncStep[] = [];
   const updatePlan: SyncStep[] = [];
 
+  // One cache for the whole run: the same source folder is compared against
+  // every target client, and re-hashing it per target read the same bytes
+  // dozens of times.
+  const digests = new SkillDigestCache();
+
   for (const [name, present] of matrix) {
     // Prefer a source client that the user allowed and that has the skill
     const source = sources.find((c) => present.has(c.id));
@@ -294,11 +318,14 @@ async function skillSync(opts: {
     // name-level diff cannot see it, so it needs an explicit overwrite.
     const sourceDir = source.findSkill(name);
     if (!sourceDir) continue;
-    const sourceDigest = digestSkillDir(sourceDir);
+    const sourceDigest = digests.of(sourceDir);
+    if (sourceDigest === null) continue;
     const stale = targets.filter((c) => {
       if (!present.has(c.id)) return false; // covered by missingPlan
       const dir = c.findSkill(name);
-      return dir !== null && digestSkillDir(dir) !== sourceDigest;
+      if (dir === null) return false;
+      const targetDigest = digests.of(dir);
+      return targetDigest !== null && targetDigest !== sourceDigest;
     });
     if (stale.length > 0) updatePlan.push({ name, from: source, to: stale });
   }
@@ -306,8 +333,9 @@ async function skillSync(opts: {
   if (missingPlan.length === 0 && updatePlan.length === 0) {
     if (!opts.update) {
       // Report drift even when it is not being fixed, so a difference in
-      // content is never silently reported as "in sync".
-      const drift = computeDrift(targets, buildMatrix(targets));
+      // content is never silently reported as "in sync". Narrow the existing
+      // matrix to the target clients instead of re-listing every skills root.
+      const drift = computeDrift(targets, restrictMatrix(matrix, targets), digests);
       if (drift.length > 0) {
         console.log(
           chalk.bold.yellow(

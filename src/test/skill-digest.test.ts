@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { digestSkillDir } from "../utils/skill-digest";
+import { digestSkillDir, SkillDigestCache } from "../utils/skill-digest";
 
 function tmpRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "acm-digest-"));
@@ -91,4 +91,53 @@ test("a missing directory does not throw", () => {
   const digest = digestSkillDir(path.join(tmpRoot(), "nope"));
   assert.equal(typeof digest, "string");
   assert.equal(digest.length, 64);
+});
+
+/* ------------------------------------------------------------------ */
+/*  SkillDigestCache                                                  */
+/* ------------------------------------------------------------------ */
+
+test("the cache returns the same digest for a repeated path", () => {
+  const dir = makeSkill(path.join(tmpRoot(), "a"), ["SKILL.md"]);
+  const cache = new SkillDigestCache();
+
+  assert.equal(cache.of(dir), digestSkillDir(dir));
+  assert.equal(cache.of(dir), cache.of(dir));
+});
+
+test("the cache hashes each distinct path only once", () => {
+  const root = tmpRoot();
+  const a = makeSkill(path.join(root, "a"), ["SKILL.md"]);
+  const b = makeSkill(path.join(root, "b"), ["SKILL.md"]);
+
+  // Counting calls to the injectable digest is how we observe "did we walk the
+  // tree again?". Patching fs is not an option: its methods are read-only
+  // getters on modern Node (a TypeError, not a silent no-op).
+  const calls: string[] = [];
+  const cache = new SkillDigestCache((dir) => {
+    calls.push(dir);
+    return digestSkillDir(dir);
+  });
+
+  for (let i = 0; i < 5; i++) {
+    cache.of(a);
+    cache.of(b);
+  }
+
+  assert.deepEqual(calls.sort(), [a, b].sort(), "one pass per folder, not per call");
+});
+
+test("the cache distinguishes two folders with different content", () => {
+  const root = tmpRoot();
+  const a = makeSkill(path.join(root, "a"), ["SKILL.md"]);
+  const b = makeSkill(path.join(root, "b"), ["SKILL.md"]);
+  writeFile(b, "SKILL.md", "changed\n");
+
+  const cache = new SkillDigestCache();
+  assert.notEqual(cache.of(a), cache.of(b));
+});
+
+test("the cache reports null for a folder that does not exist", () => {
+  const cache = new SkillDigestCache();
+  assert.equal(cache.of(path.join(tmpRoot(), "nope")), null);
 });
