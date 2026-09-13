@@ -56,6 +56,59 @@ acm mcp remove filesystem
 acm mcp sync
 ```
 
+## 日常使用
+
+上面是「怎么下命令」，这里是「实际怎么用」。多数人只需要记住一件事：**先看，再改**。
+
+### 三条只读命令，先摸清现状
+
+刚接触这个项目（或换了一台机器）时先跑这三条，它们**不写任何文件**：
+
+```bash
+acm mcp list                    # 所有 server 在哪些客户端有、哪些缺
+acm skill list                  # 技能分布，含被隐藏的自带技能计数
+acm mcp sync --dry-run          # 差异计划，不落盘
+```
+
+### 改任何东西之前先 `--dry-run`
+
+`mcp add` / `mcp remove` / `mcp sync` / `key apply` / `skill remove` 都支持 `--dry-run`：
+
+```bash
+acm mcp add foo npx -y pkg --dry-run   # 只打印会改哪些客户端，不写文件
+acm mcp remove foo --dry-run           # 只打印将删除的路径
+```
+
+干跑的输出用 `→` 而不是 `✓`，因为**什么都没发生**——不会夸大实际结果。
+
+`skill sync` 和 `skill install` **没有** `--dry-run`：它们会先列出计划并要求确认，等价于干跑；加 `-y` 则跳过确认直接执行。
+
+### 收窄作用范围的习惯
+
+不带 `--client` 时，命令会作用于 `acm init` 选中的**全部**客户端。日常操作建议显式指定：
+
+```bash
+acm mcp add foo npx -y pkg --client claude-code,workbuddy
+```
+
+这样即使某个客户端的 schema 存不下你要的字段，影响面也可控。
+
+### 三个「会报错」的情况，都是故意的
+
+| 输入 | 行为 | 为什么 |
+|------|------|--------|
+| 同名 server 但内容不同 | 拒绝覆盖，退出码 1，要求 `--force` | 防止误改你已有的配置 |
+| `--client cursro`（拼错） | 报错并列出可用 id | 拼错不能静默变成「全部客户端」 |
+| `--client ,,,`（空值） | 报错 | 空列表 ≠ 全部，避免作用范围被放大 |
+
+### 已知的行为差异
+
+`mcp sync` 遇到某个客户端配置损坏时**整体中止**（一个字节都不写）；而 `mcp remove` 是**部分成功**——健康的客户端照常删除，坏掉的那个计入失败并把退出码置 1。两者都有测试钉住，改动任一方都会立刻失败。
+
+### 退出码
+
+脚本里可以依赖退出码判断结果：`0` = 全部成功；`1` = 有冲突、有失败项，或客户端配置不可读。`--dry-run` 下若预测到冲突/失败同样返回 `1`。
+
 ## 命令参考
 
 | 命令 | 说明 |
@@ -158,6 +211,8 @@ OpenCode 的格式与其他所有客户端都不同，acm 会在读写时自动�
 所有命令输出中的 API key 均以掩码显示（`…1234`），完整 key 仅存储于本地 `~/.acm/config.json`；该文件在 macOS/Linux 上写入时会设置为 `0600`（仅属主可读写）。
 
 ## API 网关管理（Omniroute 集成）
+
+> 这一节覆盖的是可选能力。只有当你确实在跑 Omniroute（或某个 OpenAI 兼容网关）时才有意义——它不属于 MCP / 技能那样的日常路径。跳过本节不影响其他功能。
 
 通过 Omniroute（或任意 OpenAI 兼容网关）统一 API 接入，一条命令把网关地址和 key 分发到所有支持的客户端：
 
@@ -273,10 +328,40 @@ npm install
 npm run build      # 构建到 dist/
 npm run typecheck  # 全量类型检查（tsc --noEmit）
 npm test           # 先类型检查，再运行单元测试
+npm run test:e2e   # 端到端：先构建，再用真实 dist/index.js 跑一遍主链路
+npm run test:all   # 单元测试 + 端到端
 npm run dev        # 监听模式
 ```
 
 测试覆盖三类容易出问题的地方：纯函数（参数解析、客户端筛选、技能命名与内容摘要），各客户端的配置往返（读 → 改 → 写，断言无关配置项没有丢失），以及技能目录的安装/删除边界（拒绝会逃出技能根目录的名字）。
+
+### 端到端测试
+
+单元测试都是**进程内函数调用**，覆盖不到只有打包之后才存在的东西：tsup 产物能不能解析依赖、构建时注入的版本号有没有落地、commander 和手写的 `parseAddArgs` 会不会打架、以及脚本和 CI 依赖的退出码。而 acm 的全部职责就是改写别的应用的配置文件，最要命的两个事故——往配置里写进 `undefined`、把整个文件覆盖式重写——在单元测试里看不出来，在真实的文件 diff 里一眼就能看见。
+
+所以 `test:e2e` 会 spawn 真实子进程跑 `dist/index.js`，主链路六步：
+
+1. `add` 写入后，各客户端按自己的格式（JSON / TOML / YAML / OpenCode 嵌套）都能读到；
+2. 重复 `add` 同一个条目必须是 `unchanged`，且**文件字节不变**；
+3. `list` 能从每个客户端读回来，缺失的显示为“未配置”而非省略；
+4. 某个客户端配置损坏时，`list` 报 `config unreadable` 但仍列出其余客户端；`sync` 直接拒绝运行而不是基于残缺视图做同步；
+5. `remove` 删掉目标条目，**邻居条目原封不动**；
+6. 全流程跑完后逐文件比对初始快照，只允许 acm 声明过的那些文件发生变化。
+
+夹具由 `scripts/make-sandbox.js` 生成：一个临时目录冒充 `$HOME`（`HOME` / `USERPROFILE` / `LOCALAPPDATA` / `APPDATA` 四个变量一起指过去），里面造出若干客户端的配置——**故意不是干净的**，每个文件都带着与 MCP 无关的设置，因为“这些设置有没有活下来”正是要断言的东西。脚本同时输出每个文件的 sha256 快照，第 6 步就是拿它来比。
+
+这个脚本也可以**手工跑**，用来手动试命令而不碰你自己的配置：
+
+```bash
+# 造一个假 HOME（含 MCP 配置和技能树），最后打印路径与文件快照
+node scripts/make-sandbox.js --out /tmp/acm-sandbox --mcp
+
+# 然后指过去运行，随便折腾
+HOME=/tmp/acm-sandbox/home USERPROFILE=/tmp/acm-sandbox/home \
+  node dist/index.js mcp list
+```
+
+不带 `--out` 时仍写到仓库内的 `.sandbox/`（已被 gitignore），不带 `--mcp` 时只造技能树——这是 E2E 出现之前就有的默认行为，保持不变。
 
 ## 后续规划
 
