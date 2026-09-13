@@ -93,7 +93,7 @@ acm mcp sync
 
 ## 支持的客户端
 
-共 14 个。
+共 15 个。
 
 | 客户端 | 配置文件 |
 |--------|---------|
@@ -104,6 +104,7 @@ acm mcp sync
 | Windsurf | `~/.codeium/windsurf/mcp.json` |
 | Workbuddy | `~/.workbuddy/mcp.json` |
 | Codex | `~/.codex/config.toml`（TOML 格式） |
+| Hermes | 应用数据目录下的 `hermes/config.yaml` 的 `mcp_servers` 键（YAML 格式） |
 | ZCode | `~/.zcode/cli/config.json` 的 `mcp.servers` 键 |
 | OpenCode | `~/.config/opencode/opencode.json`（非标准格式，见下） |
 | QwenCode | `~/.qwen/settings.json` |
@@ -114,12 +115,15 @@ acm mcp sync
 
 macOS 和 Linux 使用对应的标准路径，工具会自动适配。
 
+Hermes 的位置与其他客户端不同：它的数据目录不在 `$HOME` 下，而在平台的应用数据目录（Windows 为 `%LOCALAPPDATA%\hermes`，macOS 为 `~/Library/Application Support/hermes`，Linux 为 `~/.local/share/hermes`）。
+
 各客户端的存储格式差异很大，acm 会各自翻译，你只写一次：
 
 | 客户端 | 顶层键 | 命令写法 | 环境变量 | 开关 |
 |--------|--------|---------|---------|------|
 | 大多数客户端 | `mcpServers` | `command` + `args` 分开 | `env` | `disabled` |
 | Codex | `mcp_servers`（TOML） | `command` + `args` 分开 | `env` | — |
+| Hermes | `mcp_servers`（YAML） | `command` + `args` 分开 | `env` | `enabled`（语义相反） |
 | ZCode | 嵌套 `mcp.servers` | `command` + `args` 分开 | `env` | `disabled` |
 | OpenCode | 嵌套 `mcp` | `command` 是**单个数组** | `environment` | `enabled`（语义相反） |
 
@@ -206,7 +210,7 @@ acm skill remove code-review
 acm skill sync --update --from claude-code
 ```
 
-支持的客户端（11 个）及技能目录：
+支持的客户端（12 个）及技能目录：
 
 | 客户端 | 技能目录 |
 |--------|---------|
@@ -216,6 +220,7 @@ acm skill sync --update --from claude-code
 | Workbuddy | `~/.workbuddy/skills/` |
 | CodeBuddy | `~/.codebuddy/skills-marketplace/skills/` |
 | Codex | `~/.codex/skills/` |
+| Hermes | 应用数据目录下的 `hermes/skills/<分类>/<技能>/` |
 | Windsurf | `~/.codeium/windsurf/skills/` |
 | QwenCode | `~/.qwen/skills/` |
 | Trae | `~/.trae/skills/` |
@@ -223,6 +228,8 @@ acm skill sync --update --from claude-code
 | Kiro | `~/.kiro/skills/` |
 
 目录不存在时按需创建。技能文件夹内的所有内容（`references/`、`scripts/`、客户端私有元数据如 `workbuddy.json`）都会原样复制。
+
+**Hermes 的技能目录多一层分类**：其他客户端是 `<根>/<技能>/SKILL.md`，Hermes 是 `<根>/<分类>/<技能>/SKILL.md`（如 `skills/srm-business/pangu-prod-data-fix/`）。acm 会递归一层去发现技能，安装时放进已有副本所在的分类；全新的技能则放在分类根部。删除技能只删技能目录本身，不会动分类目录。
 
 **符号链接会被解引用**：某些客户端的技能目录用符号链接指向插件仓库（如 `~/.agents/skills`），acm 复制时会把链接展开成真实文件，保证副本独立可用。
 
