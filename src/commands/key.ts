@@ -8,10 +8,11 @@ import {
   maskKey,
   GatewayConfig,
 } from "../utils/gateway";
-import { getSelectedApiAdapters } from "../key/registry";
+import { getSelectedApiAdapters, getAllApiAdapters } from "../key/registry";
 import { ApiConfigAdapter } from "../key/api-adapter";
 import { resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
 import { fanOut } from "../utils/fan-out";
+import { column, supportedList } from "../utils/ui";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -30,7 +31,8 @@ const resolveTargets = (clientOpt?: string): ApiConfigAdapter[] | null =>
 function reportNoApiTargets(): void {
   prompts.log.warn("No clients with file-based API config detected.");
   prompts.log.info(
-    "Supported: Claude Code, ZCode, OpenCode. Other clients store their API config in the UI or an environment variable."
+    `${supportedList(getAllApiAdapters().map((a) => a.displayName))}. ` +
+      "Other clients store their API config in the UI or an environment variable."
   );
 }
 
@@ -148,6 +150,9 @@ function keyList(): void {
     return;
   }
 
+  // Marker first, then the same padded name column `mcp list` uses, so the two
+  // commands render a client identically. Width comes from the list itself.
+  const label = column(clients, (c) => c.displayName);
   for (const client of clients) {
     const current = client.readGateway(gw?.providerName);
     if (current?.baseUrl) {
@@ -155,12 +160,10 @@ function keyList(): void {
       const marker = matches
         ? chalk.green("✓ synced")
         : chalk.yellow("⚠ different URL");
-      console.log(
-        `  ${marker}  ${client.displayName.padEnd(18)} ${chalk.dim(current.baseUrl)}`
-      );
+      console.log(`  ${marker.padEnd(24)} ${label(client)} ${chalk.dim(current.baseUrl)}`);
     } else {
       console.log(
-        `  ${chalk.red("✗ not configured")}  ${client.displayName}`
+        `  ${chalk.red("✗ not configured").padEnd(24)} ${label(client)}`
       );
     }
   }

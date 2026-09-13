@@ -1,6 +1,7 @@
 import * as prompts from "@clack/prompts";
-import { getDetectedAdapters } from "../clients/registry";
+import { getAllAdapters, getDetectedAdapters } from "../clients/registry";
 import { updateAcmConfig, getSelectedClientIds } from "../utils/acm-config";
+import { supportedList } from "../utils/ui";
 
 export async function initCommand(): Promise<void> {
   prompts.intro("acm — Agent Config Manager");
@@ -9,9 +10,9 @@ export async function initCommand(): Promise<void> {
 
   if (detected.length === 0) {
     prompts.log.warn("No AI agent clients detected on this system.");
-    prompts.log.info(
-      "Supported: Claude Desktop, Claude Code, Cursor, Cline, Windsurf, Workbuddy, Codex, ZCode, OpenCode, QwenCode, Trae, Roo, Kiro, CodeBuddy"
-    );
+    // Built from the registry: a hand-written list silently went stale every
+    // time an adapter was added.
+    prompts.log.info(supportedList(getAllAdapters().map((a) => a.displayName)));
     prompts.outro("Install a client first, then run acm init again.");
     return;
   }

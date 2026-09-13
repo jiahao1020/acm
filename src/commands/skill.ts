@@ -12,6 +12,7 @@ import { listSkillDirs, isSkillDir } from "../utils/fs-copy";
 import { SkillDigestCache } from "../utils/skill-digest";
 import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
 import { fanOut } from "../utils/fan-out";
+import { column } from "../utils/ui";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -152,6 +153,7 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
   }
 
   console.log(chalk.bold("\nSkill roots:\n"));
+  const label = column(clients, (c) => c.displayName);
   for (const client of clients) {
     const names = client.listSkills();
     // Show the root that actually holds skills (ZCode has two)
@@ -159,7 +161,7 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
     const active = dirs.find((d) => fs.existsSync(d)) ?? dirs[0];
     const tag = client.isCatalog?.() ? chalk.dim(" [catalog]") : "";
     console.log(
-      `  ${client.displayName.padEnd(14)} ${chalk.bold(String(names.length).padStart(3))} skills  ${chalk.dim(active)}${tag}`
+      `  ${label(client)} ${chalk.bold(String(names.length).padStart(3))} skills  ${chalk.dim(active)}${tag}`
     );
   }
 
@@ -168,6 +170,12 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
   const compareClients = opts.all
     ? clients
     : clients.filter((c) => !c.isCatalog?.());
+
+  // Clients whose contents actually take part in the comparison. A skill is
+  // "partial" when it is missing from one of these, so the count has to be the
+  // compared set, not every detected client — the two differ whenever a
+  // catalog is filtered out above.
+  const benchmark = compareClients.length;
 
   const matrix = buildMatrix(compareClients);
   if (matrix.size === 0) {
@@ -178,7 +186,7 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
 
   const partial: string[] = [];
   for (const [name, present] of matrix) {
-    if (present.size < compareClients.length) partial.push(name);
+    if (present.size < benchmark) partial.push(name);
   }
 
   const drift = computeDrift(compareClients, matrix, new SkillDigestCache());

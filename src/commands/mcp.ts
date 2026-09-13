@@ -6,6 +6,7 @@ import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
 import { errorMessage, resolveTargets as resolveClientTargets } from "../utils/cli-helpers";
 import { fanOut, summarise } from "../utils/fan-out";
 import { unsupportedFields } from "../utils/merge-server";
+import { column } from "../utils/ui";
 import { AddArgs, parseAddArgs, rawAddTokens } from "./add-args";
 
 /* ------------------------------------------------------------------ */
@@ -37,8 +38,10 @@ function sameServer(a: McpServerConfig, b: McpServerConfig): boolean {
  * and `{}` would compare unequal. The two are equivalent here — the adapters
  * never write an undefined field out — and treating them as different made a
  * re-add of an identical server report a conflict and demand `--force`.
+ *
+ * Exported for tests: this is the equivalence rule behind the `--force`
+ * conflict check.
  */
-/** Exported for tests: the equivalence rule behind the `--force` conflict check. */
 export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
@@ -99,22 +102,25 @@ export async function mcpList(): Promise<void> {
     chalk.bold(`\nMCP Servers across ${clients.length} client(s):\n`)
   );
 
+  // One width for the whole table, measured from the clients actually being
+  // printed, so every server block lines up regardless of display names.
+  const label = column(clients, (c) => c.displayName);
   for (const [name, clientServers] of serverMap) {
     console.log(chalk.bold.yellow(`  ${name}`));
     for (const client of clients) {
       const server = clientServers.get(client.id);
       if (server) {
         console.log(
-          `    ${chalk.green("✓")} ${client.displayName.padEnd(18)} ${serverSummary(server)}`
+          `    ${chalk.green("✓")} ${label(client)} ${serverSummary(server)}`
         );
       } else if (brokenIds.has(client.id)) {
         // Unknown, not absent: saying "not configured" would be a lie.
         console.log(
-          `    ${chalk.yellow("?")} ${client.displayName.padEnd(18)} ${chalk.dim("config unreadable")}`
+          `    ${chalk.yellow("?")} ${label(client)} ${chalk.dim("config unreadable")}`
         );
       } else {
         console.log(
-          `    ${chalk.red("✗")} ${client.displayName.padEnd(18)} ${chalk.dim("not configured")}`
+          `    ${chalk.red("✗")} ${label(client)} ${chalk.dim("not configured")}`
         );
       }
     }
@@ -417,11 +423,14 @@ export async function mcpSync(
   if (opts.dryRun) {
     console.log(chalk.bold("\nDry-run — no files written:\n"));
     let total = 0;
+    // Plan keys are client ids; pad against the same names the rest of the
+    // command prints, falling back to the id for anything unresolvable.
+    const nameOf = (id: string) => clients.find((c) => c.id === id)?.displayName ?? id;
+    const label = column([...plan.keys()], nameOf);
     for (const [id, names] of plan) {
-      const client = clients.find((c) => c.id === id);
       total += names.length;
       console.log(
-        `  ${chalk.blue("→")} ${(client?.displayName ?? id).padEnd(18)} ${names.map((n) => chalk.yellow(n)).join(", ")}`
+        `  ${chalk.blue("→")} ${label(id)} ${names.map((n) => chalk.yellow(n)).join(", ")}`
       );
     }
     console.log();
