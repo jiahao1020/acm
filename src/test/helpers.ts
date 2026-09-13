@@ -40,3 +40,57 @@ export function makeSkill(
     fs.writeFileSync(file, content, "utf8");
   }
 }
+
+/**
+ * Run `fn` while capturing everything written to stdout/stderr, and return the
+ * combined text.
+ *
+ * The commands are tested end-to-end through their console output (that is
+ * their entire user-visible contract), so the assertions need the real text.
+ * chalk is disabled for the duration to keep the assertions free of ANSI codes.
+ */
+export async function captureOutput(
+  fn: () => void | Promise<void>
+): Promise<string> {
+  const chunks: string[] = [];
+  const origOut = process.stdout.write.bind(process.stdout);
+  const origErr = process.stderr.write.bind(process.stderr);
+  const prevLevel = process.env.FORCE_COLOR;
+  process.env.FORCE_COLOR = "0";
+
+  process.stdout.write = (chunk: unknown): boolean => {
+    chunks.push(String(chunk));
+    return true;
+  };
+  process.stderr.write = (chunk: unknown): boolean => {
+    chunks.push(String(chunk));
+    return true;
+  };
+
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = origOut;
+    process.stderr.write = origErr;
+    if (prevLevel === undefined) delete process.env.FORCE_COLOR;
+    else process.env.FORCE_COLOR = prevLevel;
+  }
+
+  const text = chunks.join("");
+  // Strip any residual escape sequences from chalk/prompts.
+  return text.replace(/\u001B\[[0-9;]*m/g, "");
+}
+
+/** Reset process.exitCode around a test and report what it was set to. */
+export async function withExitCode(
+  fn: () => void | Promise<void>
+): Promise<number | undefined> {
+  const prev = process.exitCode;
+  process.exitCode = undefined;
+  try {
+    await fn();
+    return process.exitCode;
+  } finally {
+    process.exitCode = prev;
+  }
+}

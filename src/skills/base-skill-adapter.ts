@@ -58,6 +58,15 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
     return null;
   }
 
+  /**
+   * Install into the *preferred* root only.
+   *
+   * Extra roots exist so acm can see skills a client shares with another tool
+   * (ZCode reads `~/.zcode/skills` plus the shared `~/.agents/skills`). Writing
+   * to all of them would duplicate the skill and, worse, leave a copy behind
+   * that `list`/`sync` then reports as drift. The first root is where this
+   * client's own skills belong, so that is the one we write.
+   */
   installSkill(name: string, srcDir: string, force = false): void {
     assertSafeSkillName(name);
     const root = this.skillsDirs()[0];
@@ -72,6 +81,14 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
     copyDir(srcDir, dest);
   }
 
+  /**
+   * Remove the skill from every root it appears in.
+   *
+   * Removal must span all roots even though install writes only one: a skill
+   * can also live in a shared root because another tool put it there, and
+   * "remove" that leaves a findable copy behind is a lie. This asymmetry with
+   * installSkill is deliberate.
+   */
   removeSkill(name: string): boolean {
     assertSafeSkillName(name);
     let removed = false;

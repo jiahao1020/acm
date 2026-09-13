@@ -3,7 +3,7 @@ import * as path from "path";
 import { homeDir } from "../utils/paths";
 import { readJsonFile } from "../utils/json";
 import { writeTextAtomic } from "../utils/atomic-write";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { ClientAdapter, McpConfig, McpServerConfig, OptionalCapability } from "../types";
 
 /**
  * OpenCode uses a different schema from every other client:
@@ -101,18 +101,25 @@ export class OpenCodeAdapter implements ClientAdapter {
     return out;
   }
 
-  /** Common shape → OpenCode entry. */
-  private toOpenCode(s: McpServerConfig): Record<string, unknown> {
+  /** Common shape → OpenCode entry, merged over whatever was already there. */
+  private toOpenCode(
+    s: McpServerConfig,
+    prior?: Record<string, unknown>
+  ): Record<string, unknown> {
     const enabled = s.disabled !== true;
     if (typeof s.url === "string") {
-      const out: Record<string, unknown> = { type: "remote", url: s.url, enabled };
+      const out: Record<string, unknown> = { ...prior, type: "remote", url: s.url, enabled };
       if (s.headers) out.headers = s.headers;
       return out;
     }
     const command = [s.command, ...(s.args ?? [])].filter(
       (x): x is string => typeof x === "string"
     );
-    const out: Record<string, unknown> = { type: "local", command, enabled };
+    const out: Record<string, unknown> = { ...prior, type: "local", command, enabled };
+    // Drop keys from a previous shape so a former remote entry does not keep a
+    // stale url alongside the new command.
+    delete out.url;
+    delete out.headers;
     if (s.env) out.environment = s.env;
     return out;
   }
@@ -125,9 +132,19 @@ export class OpenCodeAdapter implements ClientAdapter {
     }
 
     const raw = this.readRaw();
+    const priorMcp =
+      raw.mcp && typeof raw.mcp === "object" && !Array.isArray(raw.mcp)
+        ? (raw.mcp as Record<string, unknown>)
+        : {};
     const mcp: Record<string, unknown> = {};
     for (const [name, server] of Object.entries(config.mcpServers)) {
-      mcp[name] = this.toOpenCode(server);
+      const prior = priorMcp[name];
+      mcp[name] = this.toOpenCode(
+        server,
+        prior && typeof prior === "object" && !Array.isArray(prior)
+          ? (prior as Record<string, unknown>)
+          : undefined
+      );
     }
     raw.mcp = mcp;
     if (typeof raw.$schema !== "string") {
@@ -139,5 +156,13 @@ export class OpenCodeAdapter implements ClientAdapter {
 
   supportsRemote(): boolean {
     return true;
+  }
+
+  /**
+   * OpenCode's local schema is `command` (an array), `environment` and
+   * `enabled`; it has no `cwd`, and `headers` only applies to remote entries.
+   */
+  capabilities(): readonly OptionalCapability[] {
+    return ["env", "headers", "disabled"];
   }
 }

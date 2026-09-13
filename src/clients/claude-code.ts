@@ -2,7 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { homeDir } from "../utils/paths";
 import { readJsonFile, writeJsonFile } from "../utils/json";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
+import {
+  ClientAdapter,
+  McpConfig,
+  McpServerConfig,
+  OptionalCapability,
+} from "../types";
 
 /**
  * Claude Code keeps MCP servers in more than one place depending on version:
@@ -56,11 +62,23 @@ export class ClaudeCodeAdapter implements ClientAdapter {
     const targets = paths.length > 0 ? paths : [path.join(homeDir(), ".claude.json")];
     for (const p of targets) {
       const existing = readJsonFile(p) ?? {};
-      writeJsonFile(p, { ...existing, mcpServers: config.mcpServers });
+      const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
+      // Merge per entry: a mixed pre-existing claude.json is the norm here, and
+      // swapping the object wholesale would drop keys acm does not model.
+      const next: Record<string, McpServerConfig> = {};
+      for (const [name, server] of Object.entries(config.mcpServers)) {
+        next[name] = mergeServerEntry(prior[name], server);
+      }
+      writeJsonFile(p, { ...existing, mcpServers: next });
     }
   }
 
   supportsRemote(): boolean {
     return true;
+  }
+
+  /** Claude Code's stdio schema carries env; there is no `cwd` key. */
+  capabilities(): readonly OptionalCapability[] {
+    return ["env"];
   }
 }

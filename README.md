@@ -26,6 +26,8 @@ npm install && npm run build && npm install -g .
 node dist/index.js init
 ```
 
+> Windows 上 `npm install -g .` 需要 Developer Mode 已开启，或以管理员身份运行终端——否则 npm 无法创建 `acm` 命令的 shim（会报 `EPERM` / `operation not permitted`）。不想改全局状态就直接用 `node dist/index.js`。
+
 ## 快速开始
 
 ```bash
@@ -87,7 +89,7 @@ acm mcp sync
 
 `sync` 的选项：`-y, --yes` 跳过交互确认，直接补齐（适合脚本/CI）；`--dry-run` 只展示将推送到哪些客户端。
 
-`--client` 传了不存在的 id 时会直接报错并列出可用 id，而不会被静默忽略。
+`--client` 传了不存在的 id 时会直接报错并列出可用 id，而不会被静默忽略。`--client` 传了空值（如 `--client ,,,`）同样报错——它会选中零个客户端，而不是被当成「全部」，避免命令的作用范围被悄悄放大。
 
 ## 支持的客户端
 
@@ -123,11 +125,29 @@ macOS 和 Linux 使用对应的标准路径，工具会自动适配。
 
 OpenCode 的格式与其他所有客户端都不同，acm 会在读写时自动转换。CodeBuddy 的配置文件里可能有 `//` 注释，也能正确解析。
 
+### 字段支持与告警
+
+各客户端的 schema 宽窄不一——多数 JSON 客户端根本没有 `cwd` 这个键。acm 不会把写不进去的字段悄悄丢掉，而是在写入后明确标出：
+
+```
+  ✓ Workbuddy
+      ⚠ ignores cwd — not stored by this client
+```
+
+| 字段 | 支持的客户端 |
+|------|-------------|
+| `env` | 全部 |
+| `cwd` | Codex、ZCode |
+| `headers` | Codex、OpenCode、ZCode |
+| `disabled` | Cline、CodeBuddy、Codex、OpenCode、ZCode |
+
+写入时 acm 会**按条目合并**已有配置，而不是整块替换：你手写的客户端私有键（如 Codex 的 `startup_timeout_ms`、Cursor 的自定义字段）在 acm 改写该文件后依然保留；`env` 和 `headers` 更是逐键合并，不会覆盖你已有的变量。
+
 ## 安全设计
 
-写配置文件前会自动备份为 `.bak`，并采用「写临时文件 + 原子重命名」的方式，避免写到一半损坏原文件。各客户端的非 MCP 配置项（如 Claude Desktop 的 `globalShortcut`、Codex 的 `model`、ZCode 的 `storage`、OpenCode 的 `$schema`）会被完整保留。
+写配置文件前会自动备份为 `.bak`，并采用「写临时文件 + 原子重命名」的方式，避免写到一半损坏原文件。临时文件名带随机后缀，并发运行多个 acm 实例不会互相踩踏。各客户端的非 MCP 配置项（如 Claude Desktop 的 `globalShortcut`、Codex 的 `model`、ZCode 的 `storage`、OpenCode 的 `$schema`）会被完整保留。
 
-配置文件存在但无法解析（JSON/JSON5/TOML 语法错误）时，acm 会**报错并保持原文件不动**，绝不会当成空配置覆盖掉——那正是会丢失 `storage`、`theme` 这类无关配置的路径。目标文件被客户端占用时会提示「关闭该客户端后重试」，而不是抛出裸的 `EPERM`。读取/写入单个客户端失败不会中断其余客户端，最终以非零退出码提示有失败项。
+配置文件存在但无法解析（JSON/JSON5/TOML 语法错误）时，acm 会**报错并保持原文件不动**，绝不会当成空配置覆盖掉——那正是会丢失 `storage`、`theme` 这类无关配置的路径。多个客户端中只要有一个配置文件坏了，`list` 不会整体中断：其余客户端的 server 照常展示，坏掉的那个标为 `config unreadable`（而不是误导性的 `not configured`），并以非零退出码提示。目标文件被客户端占用时会提示「关闭该客户端后重试」，而不是抛出裸的 `EPERM`。读取/写入单个客户端失败不会中断其余客户端，最终以非零退出码提示有失败项。
 
 读取配置时容忍 JSON5 语法（注释、尾逗号），因为部分客户端实际会写这类内容。Codex 的 TOML 配置同样只在能成功解析时才写回。
 

@@ -1,7 +1,13 @@
 import * as fs from "fs";
 import * as path from "path";
 import { readJsonFile, writeJsonFile } from "../utils/json";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import {
+  ClientAdapter,
+  McpConfig,
+  McpServerConfig,
+  OptionalCapability,
+} from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
 
 /**
  * Shared implementation for clients that store MCP servers as a plain
@@ -20,6 +26,10 @@ export abstract class StandardJsonAdapter implements ClientAdapter {
   protected abstract configPaths(): string[];
   /** Directory whose existence means the client is installed. */
   protected abstract installDir(): string;
+  /** Optional fields this client's schema can hold. Defaults to none. */
+  capabilities(): readonly OptionalCapability[] {
+    return [];
+  }
 
   private existingPaths(): string[] {
     return this.configPaths().filter((p) => fs.existsSync(p));
@@ -58,7 +68,14 @@ export abstract class StandardJsonAdapter implements ClientAdapter {
     }
     for (const p of targets) {
       const existing = readJsonFile(p) ?? {};
-      writeJsonFile(p, { ...existing, mcpServers: config.mcpServers });
+      const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
+      // Merge per entry so client-specific keys we do not model (and keys this
+      // adapter cannot express) survive the rewrite.
+      const next: Record<string, McpServerConfig> = {};
+      for (const [name, server] of Object.entries(config.mcpServers)) {
+        next[name] = mergeServerEntry(prior[name], server);
+      }
+      writeJsonFile(p, { ...existing, mcpServers: next });
     }
   }
 

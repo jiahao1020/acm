@@ -3,7 +3,8 @@ import chalk from "chalk";
 import * as prompts from "@clack/prompts";
 import { getSelectedAdapters } from "../clients/registry";
 import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
-import { selectClientIds, unknownClientMessage } from "../utils/targets";
+import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
+import { unsupportedFields } from "../utils/merge-server";
 import { AddArgs, parseAddArgs, rawAddTokens } from "./add-args";
 
 /* ------------------------------------------------------------------ */
@@ -12,12 +13,18 @@ import { AddArgs, parseAddArgs, rawAddTokens } from "./add-args";
 
 /**
  * Resolve the `--client` option against tracked clients.
- * Returns null (after reporting) when an id matches nothing, so callers can
- * bail out instead of acting on a silently narrowed list.
+ * Returns null (after reporting) when an id matches nothing or the value holds
+ * no ids at all, so callers can bail out instead of acting on a silently
+ * narrowed (or silently widened) list.
  */
 function resolveTargets(clientOpt?: string): ClientAdapter[] | null {
   const available = getSelectedAdapters();
-  const { targets, unknown } = selectClientIds(available, clientOpt);
+  const { targets, unknown, empty } = selectClientIds(available, clientOpt);
+  if (empty) {
+    prompts.log.error(emptyClientMessage(available));
+    process.exitCode = 1;
+    return null;
+  }
   if (unknown.length > 0) {
     prompts.log.error(unknownClientMessage(unknown, available));
     process.exitCode = 1;
@@ -44,10 +51,21 @@ function sameServer(a: McpServerConfig, b: McpServerConfig): boolean {
   return canonical(a) === canonical(b);
 }
 
-function canonical(value: unknown): string {
+/**
+ * Stable string form of a server entry, used for structural comparison.
+ *
+ * `undefined` properties are dropped rather than serialised: JSON.stringify
+ * returns the *undefined value* (not a string) for them, so `{a: undefined}`
+ * and `{}` would compare unequal. The two are equivalent here — the adapters
+ * never write an undefined field out — and treating them as different made a
+ * re-add of an identical server report a conflict and demand `--force`.
+ */
+/** Exported for tests: the equivalence rule behind the `--force` conflict check. */
+export function canonical(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
   if (value && typeof value === "object") {
     const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
       .sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0))
       .map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`);
     return `{${entries.join(",")}}`;
@@ -59,16 +77,29 @@ function canonical(value: unknown): string {
 /*  acm mcp list                                                      */
 /* ------------------------------------------------------------------ */
 
-async function mcpList(): Promise<void> {
+/** Exported for tests: `list` must survive a client whose config won't parse. */
+export async function mcpList(): Promise<void> {
   const clients = getSelectedAdapters();
   if (clients.length === 0) {
     prompts.log.warn("No clients tracked. Run `acm init` first.");
     return;
   }
 
+  // A config file that cannot be parsed must not take the whole listing down
+  // with it: the other clients' servers are still worth showing, and the user
+  // needs to see exactly which file to fix. Mirrors mcpSync's handling.
   const serverMap = new Map<string, Map<string, McpServerConfig>>();
+  const unreadable: string[] = [];
+  const brokenIds = new Set<string>();
   for (const client of clients) {
-    const cfg = client.readConfig();
+    let cfg: McpConfig;
+    try {
+      cfg = client.readConfig();
+    } catch (err: unknown) {
+      unreadable.push(`${client.displayName} (${errorMessage(err)})`);
+      brokenIds.add(client.id);
+      continue;
+    }
     for (const [name, server] of Object.entries(cfg.mcpServers)) {
       if (!serverMap.has(name)) serverMap.set(name, new Map());
       serverMap.get(name)!.set(client.id, server);
@@ -76,7 +107,13 @@ async function mcpList(): Promise<void> {
   }
 
   if (serverMap.size === 0) {
-    prompts.log.info("No MCP servers configured in any tracked client.");
+    if (unreadable.length > 0) {
+      prompts.log.error(`Could not read: ${unreadable.join("; ")}`);
+      prompts.log.info("Fix or remove the file(s) above, then retry.");
+      process.exitCode = 1;
+    } else {
+      prompts.log.info("No MCP servers configured in any tracked client.");
+    }
     return;
   }
 
@@ -92,6 +129,11 @@ async function mcpList(): Promise<void> {
         console.log(
           `    ${chalk.green("✓")} ${client.displayName.padEnd(18)} ${serverSummary(server)}`
         );
+      } else if (brokenIds.has(client.id)) {
+        // Unknown, not absent: saying "not configured" would be a lie.
+        console.log(
+          `    ${chalk.yellow("?")} ${client.displayName.padEnd(18)} ${chalk.dim("config unreadable")}`
+        );
       } else {
         console.log(
           `    ${chalk.red("✗")} ${client.displayName.padEnd(18)} ${chalk.dim("not configured")}`
@@ -99,6 +141,13 @@ async function mcpList(): Promise<void> {
       }
     }
     console.log();
+  }
+
+  if (unreadable.length > 0) {
+    prompts.log.warn(
+      `Skipped ${unreadable.length} client(s) with unreadable config: ${unreadable.join("; ")}`
+    );
+    process.exitCode = 1;
   }
 }
 
@@ -168,6 +217,8 @@ async function mcpAdd(args: AddArgs): Promise<void> {
   let conflicts = 0;
   let skipped = 0;
   let failed = 0;
+  /** Clients that took the server but cannot store one of the given fields. */
+  let warned = 0;
 
   for (const client of targets) {
     // A remote server cannot be expressed by clients that only speak stdio.
@@ -178,6 +229,10 @@ async function mcpAdd(args: AddArgs): Promise<void> {
       skipped++;
       continue;
     }
+
+    // Fields this client's schema has no place for would be written and then
+    // ignored by the client; surface that instead of silently losing them.
+    const dropped = unsupportedFields(server, client.capabilities?.());
 
     try {
       const cfg = client.readConfig();
@@ -207,6 +262,12 @@ async function mcpAdd(args: AddArgs): Promise<void> {
       cfg.mcpServers[args.name] = server;
       client.writeConfig(cfg);
       console.log(`  ${chalk.green("✓")} ${client.displayName}`);
+      if (dropped.length > 0) {
+        console.log(
+          `      ${chalk.yellow("⚠")} ${chalk.dim(`ignores ${dropped.join(", ")} — not stored by this client`)}`
+        );
+        warned++;
+      }
       if (existing) updated++;
       else added++;
     } catch (err: unknown) {
@@ -239,6 +300,11 @@ async function mcpAdd(args: AddArgs): Promise<void> {
         (failed ? ` (${failed} failed)` : "") +
         "."
     );
+    if (warned > 0) {
+      prompts.log.warn(
+        `${warned} client(s) do not store every field — see the ⚠ notes above. Re-run with --client to limit the targets.`
+      );
+    }
     if (conflicts > 0) {
       prompts.log.warn(
         `${conflicts} client(s) already have "${args.name}" with different settings — re-run with --force to overwrite.`

@@ -3,7 +3,13 @@ import * as path from "path";
 import { homeDir } from "../utils/paths";
 import { readJsonFile } from "../utils/json";
 import { writeTextAtomic } from "../utils/atomic-write";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
+import {
+  ClientAdapter,
+  McpConfig,
+  McpServerConfig,
+  OptionalCapability,
+} from "../types";
 
 /**
  * ZCode stores its own MCP servers inside its CLI config file under the
@@ -73,7 +79,18 @@ export class ZCodeAdapter implements ClientAdapter {
       raw.mcp && typeof raw.mcp === "object" && !Array.isArray(raw.mcp)
         ? (raw.mcp as Record<string, unknown>)
         : {};
-    mcp.servers = config.mcpServers;
+    // ZCode stores the common shape verbatim (no field translation), but a
+    // pre-existing entry may still carry keys acm does not model, so merge
+    // rather than replace.
+    const prior =
+      mcp.servers && typeof mcp.servers === "object" && !Array.isArray(mcp.servers)
+        ? (mcp.servers as Record<string, McpServerConfig>)
+        : {};
+    const next: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(config.mcpServers)) {
+      next[name] = mergeServerEntry(prior[name], server);
+    }
+    mcp.servers = next;
     raw.mcp = mcp;
 
     writeTextAtomic(p, JSON.stringify(raw, null, 2) + "\n");
@@ -81,5 +98,10 @@ export class ZCodeAdapter implements ClientAdapter {
 
   supportsRemote(): boolean {
     return true;
+  }
+
+  /** ZCode stores the common shape as-is, so every optional field round-trips. */
+  capabilities(): readonly OptionalCapability[] {
+    return ["cwd", "env", "headers", "disabled"];
   }
 }

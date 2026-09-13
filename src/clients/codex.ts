@@ -4,7 +4,13 @@ import { stringify as stringifyToml } from "smol-toml";
 import { homeDir } from "../utils/paths";
 import { readTomlFile } from "../utils/toml";
 import { writeTextAtomic } from "../utils/atomic-write";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
+import {
+  ClientAdapter,
+  McpConfig,
+  McpServerConfig,
+  OptionalCapability,
+} from "../types";
 
 /**
  * OpenAI Codex CLI stores MCP config in TOML format at ~/.codex/config.toml.
@@ -60,12 +66,23 @@ export class CodexAdapter implements ClientAdapter {
     // readTomlFile keeps every unrelated table (model, profiles, ...) and
     // refuses to touch a file it cannot parse.
     const parsed = readTomlFile(p) ?? {};
-    parsed.mcp_servers = config.mcpServers;
+    const prior = (parsed.mcp_servers as Record<string, McpServerConfig>) ?? {};
+    // Merge per entry so a Codex-only key (e.g. `startup_timeout_ms`) survives.
+    const next: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(config.mcpServers)) {
+      next[name] = mergeServerEntry(prior[name], server);
+    }
+    parsed.mcp_servers = next;
 
     writeTextAtomic(p, stringifyToml(parsed) + "\n");
   }
 
   supportsRemote(): boolean {
     return true;
+  }
+
+  /** Codex's table is the common shape verbatim, so every field round-trips. */
+  capabilities(): readonly OptionalCapability[] {
+    return ["cwd", "env", "headers", "disabled"];
   }
 }

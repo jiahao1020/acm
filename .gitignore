@@ -5,3 +5,10 @@ dist/
 *.log
 .DS_Store
 .workBuddy
+.workbuddy/
+
+# acm's own local state is never part of the source tree.
+.acm/
+
+# Staging files the atomic writer leaves behind after a crash.
+*.tmp

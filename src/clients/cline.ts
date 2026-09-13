@@ -2,7 +2,13 @@ import * as fs from "fs";
 import * as path from "path";
 import { appDataDir } from "../utils/paths";
 import { readJsonFile, writeJsonFile } from "../utils/json";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
+import {
+  ClientAdapter,
+  McpConfig,
+  McpServerConfig,
+  OptionalCapability,
+} from "../types";
 
 /**
  * Cline stores MCP settings in VS Code's globalStorage directory.
@@ -62,7 +68,12 @@ export class ClineAdapter implements ClientAdapter {
 
     if (fs.existsSync(p)) {
       const existing = readJsonFile(p) ?? {};
-      writeJsonFile(p, { ...existing, mcpServers: config.mcpServers });
+      const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
+      const next: Record<string, McpServerConfig> = {};
+      for (const [name, server] of Object.entries(config.mcpServers)) {
+        next[name] = mergeServerEntry(prior[name], server);
+      }
+      writeJsonFile(p, { ...existing, mcpServers: next });
     } else {
       writeJsonFile(p, { mcpServers: config.mcpServers });
     }
@@ -70,5 +81,10 @@ export class ClineAdapter implements ClientAdapter {
 
   supportsRemote(): boolean {
     return true;
+  }
+
+  /** Cline's schema is command + args + env, plus its own `disabled` flag. */
+  capabilities(): readonly OptionalCapability[] {
+    return ["env", "disabled"];
   }
 }

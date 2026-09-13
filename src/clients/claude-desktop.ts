@@ -2,7 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { appDataDir } from "../utils/paths";
 import { readJsonFile, writeJsonFile } from "../utils/json";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
+import { ClientAdapter, McpConfig, McpServerConfig, OptionalCapability } from "../types";
 
 export class ClaudeDesktopAdapter implements ClientAdapter {
   id = "claude-desktop";
@@ -41,13 +42,27 @@ export class ClaudeDesktopAdapter implements ClientAdapter {
       writeJsonFile(newPath, config);
       return;
     }
-    // Preserve any non-mcpServers top-level keys
+    // Preserve any non-mcpServers top-level keys, and any per-entry keys the
+    // common model does not know about.
     const existing = readJsonFile(p) ?? {};
-    writeJsonFile(p, { ...existing, mcpServers: config.mcpServers });
+    const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
+    const next: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(config.mcpServers)) {
+      next[name] = mergeServerEntry(prior[name], server);
+    }
+    writeJsonFile(p, { ...existing, mcpServers: next });
   }
 
   /** Claude Desktop launches stdio servers only, so remote entries are skipped. */
   supportsRemote(): boolean {
     return false;
+  }
+
+  /**
+   * Claude Desktop's schema is command + args + env only. There is no `cwd`
+   * key, so passing one is reported rather than dropped silently.
+   */
+  capabilities(): readonly OptionalCapability[] {
+    return ["env"];
   }
 }

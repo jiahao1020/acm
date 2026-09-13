@@ -2,8 +2,18 @@ import * as fs from "fs";
 import * as path from "path";
 import { homeDir } from "../utils/paths";
 import { readJsonFile, writeJsonFile } from "../utils/json";
-import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+import { mergeServerEntry } from "../utils/merge-server";
+import {
+  ClientAdapter,
+  McpConfig,
+  McpServerConfig,
+  OptionalCapability,
+} from "../types";
 
+/**
+ * WorkBuddy's `mcpServers` schema is command + args + env. It has no `cwd` key,
+ * so an added working directory is reported instead of dropped in silence.
+ */
 export class WorkbuddyAdapter implements ClientAdapter {
   id = "workbuddy";
   displayName = "Workbuddy";
@@ -38,10 +48,19 @@ export class WorkbuddyAdapter implements ClientAdapter {
       return;
     }
     const existing = readJsonFile(p) ?? {};
-    writeJsonFile(p, { ...existing, mcpServers: config.mcpServers });
+    const prior = (existing.mcpServers as Record<string, McpServerConfig>) ?? {};
+    const next: Record<string, McpServerConfig> = {};
+    for (const [name, server] of Object.entries(config.mcpServers)) {
+      next[name] = mergeServerEntry(prior[name], server);
+    }
+    writeJsonFile(p, { ...existing, mcpServers: next });
   }
 
   supportsRemote(): boolean {
     return true;
+  }
+
+  capabilities(): readonly OptionalCapability[] {
+    return ["env"];
   }
 }

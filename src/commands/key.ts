@@ -10,7 +10,7 @@ import {
 } from "../utils/gateway";
 import { getSelectedApiAdapters } from "../key/registry";
 import { ApiConfigAdapter } from "../key/api-adapter";
-import { selectClientIds, unknownClientMessage } from "../utils/targets";
+import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -18,18 +18,38 @@ import { selectClientIds, unknownClientMessage } from "../utils/targets";
 
 /**
  * Resolve the `--client` option against detected clients.
- * Returns null (after reporting) when an id matches nothing, so callers can
- * bail out instead of acting on a silently narrowed list.
+ * Returns null (after reporting) when an id matches nothing or the value holds
+ * no ids at all, so callers can bail out instead of acting on a silently
+ * narrowed (or silently widened) list.
  */
 function resolveTargets(clientOpt?: string): ApiConfigAdapter[] | null {
   const available = getSelectedApiAdapters();
-  const { targets, unknown } = selectClientIds(available, clientOpt);
+  const { targets, unknown, empty } = selectClientIds(available, clientOpt);
+  if (empty) {
+    prompts.log.error(emptyClientMessage(available));
+    process.exitCode = 1;
+    return null;
+  }
   if (unknown.length > 0) {
     prompts.log.error(unknownClientMessage(unknown, available));
     process.exitCode = 1;
     return null;
   }
   return targets;
+}
+
+/**
+ * Explain that no client can take the gateway via a file.
+ *
+ * Two situations reach here — no supported client installed at all, and
+ * supported clients installed that keep their API config in the UI — and both
+ * used to print slightly different paraphrases of the same thing.
+ */
+function reportNoApiTargets(): void {
+  prompts.log.warn("No clients with file-based API config detected.");
+  prompts.log.info(
+    "Supported: Claude Code, ZCode, OpenCode. Other clients store their API config in the UI or an environment variable."
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -83,8 +103,7 @@ async function keyApply(opts: {
   const targets = resolveTargets(opts.client);
   if (!targets) return;
   if (targets.length === 0) {
-    prompts.log.warn("No detected clients with file-based API config.");
-    prompts.log.info("Supported clients: Claude Code, ZCode, OpenCode");
+    reportNoApiTargets();
     process.exitCode = 1;
     return;
   }
@@ -151,7 +170,7 @@ function keyList(): void {
   console.log(chalk.bold("\nClient status:\n"));
   const clients = getSelectedApiAdapters();
   if (clients.length === 0) {
-    console.log(chalk.dim("  No clients with file-based API config detected."));
+    reportNoApiTargets();
     console.log();
     return;
   }

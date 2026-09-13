@@ -90,3 +90,49 @@ test("removeSkill cannot delete the client directory through '..'", () => {
     assert.ok(fs.existsSync(path.join(root, "demo")), "existing skill must survive");
   });
 });
+
+/* A client with a private root plus a shared one (the ZCode shape). */
+const ZCODE_LIKE_SKILLS = {
+  id: "zcode",
+  displayName: "ZCode",
+  roots: [".zcode/skills", ".agents/skills"],
+};
+
+test("installSkill writes only the preferred root, so no duplicate copy appears", () => {
+  withFakeHome((home) => {
+    const adapter = new SpecSkillAdapter(ZCODE_LIKE_SKILLS);
+    const src = path.join(home, "src-skill");
+    makeSkill(src, "demo");
+
+    adapter.installSkill("demo", src);
+
+    assert.ok(fs.existsSync(path.join(home, ".zcode", "skills", "demo")), "preferred root used");
+    assert.equal(
+      fs.existsSync(path.join(home, ".agents", "skills", "demo")),
+      false,
+      "the shared root must not receive a duplicate — it would show up as drift"
+    );
+    assert.deepEqual(adapter.listSkills(), ["demo"], "one skill, not two");
+  });
+});
+
+test("removeSkill clears every root, because a copy elsewhere is still findable", () => {
+  withFakeHome((home) => {
+    const adapter = new SpecSkillAdapter(ZCODE_LIKE_SKILLS);
+    const src = path.join(home, "src-skill");
+    makeSkill(src, "demo");
+    adapter.installSkill("demo", src);
+
+    // Another tool also placed the skill in the shared root.
+    makeSkill(path.join(home, ".agents", "skills", "demo"), "demo");
+
+    assert.equal(adapter.removeSkill("demo"), true);
+    assert.equal(fs.existsSync(path.join(home, ".zcode", "skills", "demo")), false);
+    assert.equal(
+      fs.existsSync(path.join(home, ".agents", "skills", "demo")),
+      false,
+      "a leftover copy in the shared root would reappear after `sync`"
+    );
+    assert.deepEqual(adapter.listSkills(), []);
+  });
+});

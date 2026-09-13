@@ -10,7 +10,7 @@ import { SkillAdapter } from "../skills/skill-adapter";
 import { gitRepoName, isSafeSkillName, resolveSkillName } from "../skills/skill-name";
 import { listSkillDirs, isSkillDir } from "../utils/fs-copy";
 import { digestSkillDir } from "../utils/skill-digest";
-import { selectClientIds, unknownClientMessage } from "../utils/targets";
+import { selectClientIds, unknownClientMessage, emptyClientMessage } from "../utils/targets";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                           */
@@ -18,12 +18,18 @@ import { selectClientIds, unknownClientMessage } from "../utils/targets";
 
 /**
  * Resolve the `--client` option against detected clients.
- * Returns null (after reporting) when an id matches nothing, so callers can
- * bail out instead of acting on a silently narrowed list.
+ * Returns null (after reporting) when an id matches nothing or the value holds
+ * no ids at all, so callers can bail out instead of acting on a silently
+ * narrowed (or silently widened) list.
  */
 function resolveTargets(clientOpt?: string): SkillAdapter[] | null {
   const available = getSelectedSkillAdapters();
-  const { targets, unknown } = selectClientIds(available, clientOpt);
+  const { targets, unknown, empty } = selectClientIds(available, clientOpt);
+  if (empty) {
+    prompts.log.error(emptyClientMessage(available));
+    process.exitCode = 1;
+    return null;
+  }
   if (unknown.length > 0) {
     prompts.log.error(unknownClientMessage(unknown, available));
     process.exitCode = 1;

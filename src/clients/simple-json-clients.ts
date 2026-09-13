@@ -1,6 +1,7 @@
 import * as path from "path";
 import { homeDir } from "../utils/paths";
 import { StandardJsonAdapter } from "./base-json-adapter";
+import { OptionalCapability } from "../types";
 
 /**
  * Clients that store MCP servers as a plain `mcpServers` object in one or more
@@ -10,6 +11,11 @@ import { StandardJsonAdapter } from "./base-json-adapter";
  *
  * `configFiles` are relative to the home directory; every file that exists is
  * kept in sync (see StandardJsonAdapter).
+ *
+ * `capabilities` lists the optional fields the client's schema actually holds.
+ * All five are plain `mcpServers` JSON clients whose schema is command + args +
+ * env, with no `cwd` and no `disabled` key — declaring that is what turns a
+ * silently dropped `--cwd` into a visible warning.
  */
 export interface SimpleJsonClientSpec {
   id: string;
@@ -18,13 +24,42 @@ export interface SimpleJsonClientSpec {
   configFiles: string[];
   /** Directory whose existence means the client is installed. */
   installDir: string;
+  /** Optional server fields this client can persist. */
+  capabilities: readonly OptionalCapability[];
 }
 
+/** The shared schema of a plain `mcpServers` JSON client. */
+const STDIO_JSON_CAPS: readonly OptionalCapability[] = ["env"];
+
 export const SIMPLE_JSON_CLIENTS: SimpleJsonClientSpec[] = [
-  { id: "qwen-code", displayName: "QwenCode", configFiles: [".qwen/settings.json"], installDir: ".qwen" },
-  { id: "trae", displayName: "Trae", configFiles: [".trae/settings.json"], installDir: ".trae" },
-  { id: "roo", displayName: "Roo", configFiles: [".roo/settings.json"], installDir: ".roo" },
-  { id: "kiro", displayName: "Kiro", configFiles: [".kiro/settings.json"], installDir: ".kiro" },
+  {
+    id: "qwen-code",
+    displayName: "QwenCode",
+    configFiles: [".qwen/settings.json"],
+    installDir: ".qwen",
+    capabilities: STDIO_JSON_CAPS,
+  },
+  {
+    id: "trae",
+    displayName: "Trae",
+    configFiles: [".trae/settings.json"],
+    installDir: ".trae",
+    capabilities: STDIO_JSON_CAPS,
+  },
+  {
+    id: "roo",
+    displayName: "Roo",
+    configFiles: [".roo/settings.json"],
+    installDir: ".roo",
+    capabilities: STDIO_JSON_CAPS,
+  },
+  {
+    id: "kiro",
+    displayName: "Kiro",
+    configFiles: [".kiro/settings.json"],
+    installDir: ".kiro",
+    capabilities: STDIO_JSON_CAPS,
+  },
   {
     id: "codebuddy",
     displayName: "CodeBuddy",
@@ -33,6 +68,7 @@ export const SIMPLE_JSON_CLIENTS: SimpleJsonClientSpec[] = [
     // either location stays in sync.
     configFiles: [".codebuddy/mcp.json", ".codebuddy/settings.json"],
     installDir: ".codebuddy",
+    capabilities: ["env", "disabled"],
   },
 ];
 
@@ -55,5 +91,9 @@ export class SpecJsonAdapter extends StandardJsonAdapter {
 
   protected installDir(): string {
     return path.join(homeDir(), ...this.spec.installDir.split("/"));
+  }
+
+  capabilities(): readonly OptionalCapability[] {
+    return this.spec.capabilities;
   }
 }

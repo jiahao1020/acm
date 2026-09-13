@@ -1,23 +1,20 @@
 import { Command } from "commander";
-import * as fs from "fs";
-import * as path from "path";
 import { initCommand } from "./commands/init";
 import { createMcpCommand } from "./commands/mcp";
 import { createKeyCommand } from "./commands/key";
 import { createSkillCommand } from "./commands/skill";
 import { ConfigParseError } from "./utils/config-error";
 
-/** Version read from the installed package.json so it cannot drift from the release. */
-function readVersion(): string {
-  try {
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf-8")
-    ) as { version?: unknown };
-    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-}
+/**
+ * Version injected at build time by tsup (`define`), so it can never drift from
+ * the release and never depends on package.json being reachable at runtime.
+ *
+ * The previous runtime lookup joined `__dirname/../package.json`, which points
+ * outside the package when the file is executed from `src/`, and silently
+ * degraded to "0.0.0" — a wrong version in bug reports is worse than a missing
+ * one, so there is no filesystem fallback here.
+ */
+const VERSION = process.env.ACM_VERSION ?? "0.0.0";
 
 const program = new Command();
 
@@ -26,7 +23,7 @@ program
   .description(
     "Agent Config Manager — sync MCP servers, API gateway config and skills across AI agent clients"
   )
-  .version(readVersion())
+  .version(VERSION)
   .enablePositionalOptions();
 
 program
