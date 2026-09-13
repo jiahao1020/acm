@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { SkillAdapter } from "./skill-adapter";
 import { isSafeSkillName } from "./skill-name";
-import { copyDir, removeDir, listSkillDirsAt } from "../utils/fs-copy";
+import { copyDir, removeDir, listSkillPathsAt } from "../utils/fs-copy";
 
 /**
  * A name that would resolve outside the skills root (`..`, a path, an empty
@@ -42,8 +42,10 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
   /**
    * Names the user owns, i.e. everything except skills that shipped with the
    * client. Overridden by clients that bundle a catalogue in the same root.
+   *
+   * @param dir Absolute path of the skill, when the caller already knows it.
    */
-  isBundledSkill(_name: string): boolean {
+  isBundledSkill(_name: string, _dir?: string): boolean {
     return false;
   }
 
@@ -56,29 +58,58 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
   }
 
   /**
-   * Every skill present on disk, bundled ones included.
+   * Every skill present on disk, bundled ones included, by name.
    *
    * Kept separate from {@link listSkills} so the handful of callers that must
    * see the whole tree — `remove` in particular — are not silently blinded by
    * the comparison filter.
    */
   listAllSkills(): string[] {
-    const names = new Set<string>();
+    return [...new Set(this.allSkillPaths().map((p) => path.basename(p)))].sort();
+  }
+
+  /**
+   * Every skill location, deduplicated by path.
+   *
+   * {@link listSkills} filters through this so classification can be told
+   * *where* a skill is instead of being handed a name and having to search the
+   * whole tree for it — a per-skill full walk is quadratic, which is very
+   * visible on Hermes' 113-skill nested catalogue.
+   *
+   * Duplicate names are *not* collapsed here: filtering has to see every
+   * location of a name, or the surviving one alone would decide its fate. The
+   * name-level dedupe happens in {@link listAllSkills}.
+   */
+  private allSkillPaths(): string[] {
+    const paths = new Set<string>();
     for (const root of this.skillsDirs()) {
-      for (const n of listSkillDirsAt(root, this.depth())) names.add(n);
+      for (const p of listSkillPathsAt(root, this.depth())) paths.add(p);
     }
-    return [...names].sort();
+    return [...paths].sort();
   }
 
   /**
    * User-owned skills — the set that participates in diffs and sync.
    *
    * Client-bundled skills are dropped here rather than at each call site so
-   * that "missing from every other client" never gets reported for the ~96
+   * that "missing from every other client" never gets reported for the ~99
    * skills Hermes ships with.
+   *
+   * A name is kept when *any* of its locations is user-owned. Erring towards
+   * visible is deliberate: a duplicate name is already an odd state, and
+   * hiding the user's copy would be the worse mistake.
    */
   listSkills(): string[] {
-    return this.listAllSkills().filter((n) => !this.isBundledSkill(n));
+    const owned = new Set<string>();
+    // One pass, consulting *every* location of each name: with a name in two
+    // categories the surviving path is arbitrary, so letting one location
+    // decide would hide the user's copy whenever the bundled one came first.
+    // A name is kept as soon as any location of it turns out to be the user's.
+    for (const dir of this.allSkillPaths()) {
+      const name = path.basename(dir);
+      if (!this.isBundledSkill(name, dir)) owned.add(name);
+    }
+    return [...owned].sort();
   }
 
   findSkill(name: string): string | null {

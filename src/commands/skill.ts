@@ -182,13 +182,14 @@ async function skillList(opts: {
     const tag = client.isCatalog?.() ? chalk.dim(" [catalog]") : "";
 
     // Bundled skills are hidden by default; say so rather than letting the
-    // count look wrong against what is on disk.
+    // count look wrong against what is on disk. Skipped entirely when the
+    // caller asked for the full list or supplied a non-listing stub, since the
+    // count is then either unknown or equal to `names.length`.
     const total = client.listAllSkills?.()?.length;
     const hidden =
       !opts.includeBundled && total !== undefined ? total - names.length : 0;
     const hiddenTag =
       hidden > 0 ? chalk.dim(` (+${hidden} bundled, hidden)`) : "";
-
     console.log(
       `  ${label(client)} ${chalk.bold(String(names.length).padStart(3))} skills ${hiddenTag} ${chalk.dim(active)}${tag}`
     );

@@ -45,11 +45,11 @@ export function listSkillDirs(skillsRoot: string): string[] {
 }
 
 /**
- * List skills that live `depth` levels below `skillsRoot`.
+ * List skill folder paths that live `depth` levels below `skillsRoot`.
  *
  * Most clients use `<root>/<skill>/SKILL.md` (depth 0). Hermes groups skills by
  * category — `<root>/<category>/<skill>/SKILL.md` (depth 1) — and its root holds
- * 17 such category folders, so a depth-0 scan would report the categories as
+ * 19 such category folders, so a depth-0 scan would report the categories as
  * skills and miss all 113 real ones.
  *
  * A folder is treated as a skill only when it is exactly at `depth` and holds a
@@ -57,8 +57,12 @@ export function listSkillDirs(skillsRoot: string): string[] {
  * descending further is what finds the real leaf. Recursion stops at the first
  * recognized skill so a skill's own `references/` subfolder can never be
  * mistaken for another skill.
+ *
+ * Paths rather than names, because a caller filtering the result needs to know
+ * where each skill lives; recovering that from the name alone costs a walk of
+ * the whole tree per skill.
  */
-export function listSkillDirsAt(skillsRoot: string, depth: number): string[] {
+export function listSkillPathsAt(skillsRoot: string, depth: number): string[] {
   if (!fs.existsSync(skillsRoot)) return [];
   let entries: fs.Dirent[];
   try {
@@ -67,7 +71,7 @@ export function listSkillDirsAt(skillsRoot: string, depth: number): string[] {
     return [];
   }
 
-  const names: string[] = [];
+  const paths: string[] = [];
   for (const entry of entries) {
     // Hidden entries are metadata, not skills: Hermes keeps `.curator_state`,
     // `.usage.json` and `.bundled_manifest` alongside the category folders.
@@ -86,10 +90,15 @@ export function listSkillDirsAt(skillsRoot: string, depth: number): string[] {
     if (!isDir) continue;
 
     if (isSkillDir(full)) {
-      names.push(entry.name);
+      paths.push(full);
     } else if (depth > 0) {
-      names.push(...listSkillDirsAt(full, depth - 1));
+      paths.push(...listSkillPathsAt(full, depth - 1));
     }
   }
-  return names.sort();
+  return paths.sort();
+}
+
+/** Names of the skills {@link listSkillPathsAt} finds. */
+export function listSkillDirsAt(skillsRoot: string, depth: number): string[] {
+  return listSkillPathsAt(skillsRoot, depth).map((p) => path.basename(p));
 }

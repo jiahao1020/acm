@@ -31,14 +31,15 @@ function makeNested(home: string): string {
   makeSkill(path.join(root, "srm-business", "log-search-check"), "log-search-check", {
     "_user_meta.json": '{"name":"log-search-check","source":"userImport"}',
   });
-  // Bundled with Hermes: no provenance marker of its own, but named in the
-  // manifest.
+  // Bundled with Hermes: no provenance marker of its own, which is all the
+  // rule needs to treat it as bundled.
   makeSkill(path.join(root, "devops", "kanban-worker"), "kanban-worker");
   // A flat skill at the root, which Hermes also allows.
   makeSkill(path.join(root, "yuanbao"), "yuanbao", {
     "_user_meta.json": '{"name":"yuanbao","source":"userImport"}',
   });
-  // Metadata files Hermes keeps beside the categories.
+  // Metadata files Hermes keeps beside the categories. The manifest is present
+  // because the real root has one, but classification does not consult it.
   fs.writeFileSync(path.join(root, ".bundled_manifest"), "kanban-worker:1\n", "utf8");
   fs.writeFileSync(path.join(root, ".usage.json"), "{}", "utf8");
   fs.mkdirSync(path.join(root, ".curator_state"), { recursive: true });
@@ -90,7 +91,8 @@ test("the Hermes skill adapter lists nested skills", async () => {
   await withFakeHome(async (home) => {
     makeNested(home);
     const adapter = new HermesSkillAdapter();
-    // kanban-worker is in the manifest, so it is bundled and stays out.
+    // kanban-worker carries no provenance marker, so it is bundled and stays
+    // out.
     assert.deepEqual(adapter.listSkills(), [
       "log-search-check",
       "pangu-prod-data-fix",
@@ -140,9 +142,9 @@ test("a marketplace skill counts as the user's, not as bundled", async () => {
 test("a skill with no provenance marker is treated as bundled", async () => {
   await withFakeHome(async (home) => {
     const root = makeNested(home);
-    // Neither in the manifest nor carrying a meta file. Hermes' own catalogue
-    // drifts away from the manifest between versions, so this has to be
-    // excluded — leaving it in would make every other client look broken.
+    // No provenance marker of any kind. Hermes' own catalogue is large and
+    // mostly undocumented, so this is the common case and has to be excluded —
+    // leaving it in would make every other client look broken.
     makeSkill(path.join(root, "research", "blogwatcher"), "blogwatcher");
     const adapter = new HermesSkillAdapter();
     assert.equal(adapter.isBundledSkill("blogwatcher"), true);
@@ -184,12 +186,61 @@ test("agent_created must be true, not merely present", async () => {
   });
 });
 
-test("a user category wins over the bundled manifest", async () => {
+test("classification agrees whether or not the caller supplies the path", async () => {
   await withFakeHome(async (home) => {
     const root = makeNested(home);
-    // The category rule is checked before the manifest. Pinning that order so
-    // it stays a decision rather than an accident: a bundled name the user has
-    // taken over inside their own category should remain visible.
+    makeSkill(path.join(root, "srm-business", "srm-buried-point"), "srm-buried-point");
+    makeSkill(path.join(root, "research", "blogwatcher"), "blogwatcher");
+    const adapter = new HermesSkillAdapter();
+
+    for (const [name, expected] of [
+      ["kanban-worker", true], // no marker at all
+      ["blogwatcher", true], // no marker at all
+      ["srm-buried-point", false], // user category
+      ["pangu-prod-data-fix", false], // _user_meta.json
+    ] as const) {
+      const dir = adapter.findSkill(name);
+      assert.equal(dir, adapter.findSkill(name), `${name} resolves consistently`);
+      assert.equal(
+        adapter.isBundledSkill(name, dir!),
+        adapter.isBundledSkill(name),
+        `${name}: path-backed and name-only classification must agree`
+      );
+      assert.equal(adapter.isBundledSkill(name, dir!), expected, `${name} expected`);
+    }
+  });
+});
+
+test("a path-backed call does not resolve the name again", async () => {
+  await withFakeHome(async (home) => {
+    const root = makeNested(home);
+    makeSkill(path.join(root, "research", "blogwatcher"), "blogwatcher");
+    const adapter = new HermesSkillAdapter();
+
+    // The whole point of the optional path is to avoid a per-skill tree walk.
+    // Counting the calls is the only way to see that from outside.
+    let walks = 0;
+    const original = adapter.findSkill.bind(adapter);
+    (adapter as { findSkill: (n: string) => string | null }).findSkill = (n: string) => {
+      walks++;
+      return original(n);
+    };
+
+    const dir = path.join(root, "research", "blogwatcher");
+    adapter.isBundledSkill("blogwatcher", dir);
+    assert.equal(walks, 0, "supplying the path must skip the lookup");
+
+    adapter.isBundledSkill("blogwatcher");
+    assert.equal(walks, 1, "omitting the path still resolves, for single lookups");
+  });
+});
+
+test("the category rule outranks every marker", async () => {
+  await withFakeHome(async (home) => {
+    const root = makeNested(home);
+    // A user category is the strongest signal: it wins even against a manifest
+    // entry, so a bundled name the user has adopted inside their own category
+    // stays visible.
     makeSkill(path.join(root, "srm-business", "adopted"), "adopted");
     fs.appendFileSync(path.join(root, ".bundled_manifest"), "adopted:1\n");
     const adapter = new HermesSkillAdapter();
@@ -198,20 +249,45 @@ test("a user category wins over the bundled manifest", async () => {
   });
 });
 
-test("a missing manifest does not make every skill bundled", async () => {
+test("the bundled manifest does not drive classification", async () => {
   await withFakeHome(async (home) => {
     const root = makeNested(home);
-    fs.rmSync(path.join(root, ".bundled_manifest"));
-    // The meta-file signal still separates the two sets.
+    // The manifest is a snapshot of a past Hermes version — 58 names for 113
+    // skills on the machine this was written against — so it must not decide.
+    // Removing it changes nothing, and editing it changes nothing either.
     makeSkill(path.join(root, "research", "blogwatcher"), "blogwatcher");
+    const adapter = new HermesSkillAdapter();
+    const before = adapter.listSkills();
+
+    fs.rmSync(path.join(root, ".bundled_manifest"));
+    assert.deepEqual(new HermesSkillAdapter().listSkills(), before);
+
+    fs.writeFileSync(
+      path.join(root, ".bundled_manifest"),
+      "pangu-prod-data-fix:1\nblogwatcher:1\n",
+      "utf8"
+    );
+    const after = new HermesSkillAdapter().listSkills();
+    assert.deepEqual(after, before, "manifest edits must not change the result");
+    assert.equal(after.includes("pangu-prod-data-fix"), true);
+    assert.equal(after.includes("blogwatcher"), false);
+  });
+});
+
+test("a re-installed bundled skill becomes the user's", async () => {
+  await withFakeHome(async (home) => {
+    const root = makeNested(home);
+    const src = path.join(home, "incoming");
+    makeSkill(src, "kanban-worker", { "extra.md": "x" });
 
     const adapter = new HermesSkillAdapter();
-    assert.deepEqual(adapter.listSkills(), [
-      "log-search-check",
-      "pangu-prod-data-fix",
-      "yuanbao",
-    ]);
-    assert.equal(adapter.isBundledSkill("blogwatcher"), true);
+    assert.equal(adapter.isBundledSkill("kanban-worker"), true);
+    // The installed copy joins the same category as the one it replaces and
+    // gains a marker, so the name now belongs to the user. Keying off the
+    // manifest's name list instead would have kept hiding it.
+    adapter.installSkill("kanban-worker", src, true);
+    assert.equal(adapter.isBundledSkill("kanban-worker"), false);
+    assert.equal(adapter.listSkills().includes("kanban-worker"), true);
   });
 });
 
@@ -219,6 +295,40 @@ test("an unknown name is never reported as bundled", async () => {
   await withFakeHome(async () => {
     // Guards the findSkill()-returns-null path: absent is not bundled.
     assert.equal(new HermesSkillAdapter().isBundledSkill("no-such-skill"), false);
+  });
+});
+
+test("the same name in two categories is one skill, not two", async () => {
+  await withFakeHome(async (home) => {
+    const root = makeNested(home);
+    makeSkill(path.join(root, "srm-business", "dup"), "dup");
+    makeSkill(path.join(root, "devops", "dup"), "dup");
+
+    const adapter = new HermesSkillAdapter();
+    // Regression: deduping by path rather than by name let a same-named skill
+    // appear twice, which double-counted it and broke the hidden-count maths.
+    assert.deepEqual(
+      adapter.listAllSkills().filter((n) => n === "dup"),
+      ["dup"]
+    );
+    assert.deepEqual(
+      adapter.listSkills().filter((n) => n === "dup"),
+      ["dup"]
+    );
+  });
+});
+
+test("a name kept visible when any of its locations is the user's", async () => {
+  await withFakeHome(async (home) => {
+    const root = makeNested(home);
+    // A bundled location (devops, no marker) plus a user location.
+    makeSkill(path.join(root, "devops", "clash"), "clash");
+    makeSkill(path.join(root, "srm-business", "clash"), "clash");
+
+    const adapter = new HermesSkillAdapter();
+    // Erring towards visible: the user's copy must not be hidden because a
+    // same-named bundled skill exists elsewhere.
+    assert.equal(adapter.listSkills().includes("clash"), true);
   });
 });
 

@@ -125,7 +125,7 @@ export const USER_CATEGORIES = new Set(["srm-business"]);
  * so the third-level skills under `mlops/evaluation/` stay out of reach.
  *
  * Hermes ships its own catalogue into the same root as the user's (113 skills
- * across 19 categories on the machine this was written against, of which 10 are
+ * across 19 categories on the machine this was written against, of which 14 are
  * the user's). Letting those into the diff makes every other client look like
  * it is missing ~100 skills, so they are excluded per skill via
  * {@link isBundledSkill} — not via `isCatalog`, which would also stop Hermes
@@ -135,9 +135,6 @@ export const USER_CATEGORIES = new Set(["srm-business"]);
 export class HermesSkillAdapter extends BaseSkillAdapter {
   id = "hermes";
   displayName = "Hermes";
-
-  /** Lazily built; one scan per process is enough. */
-  private bundledNames: Set<string> | null = null;
 
   protected skillsDirs(): string[] {
     return [path.join(hermesHome(), "skills")];
@@ -162,48 +159,54 @@ export class HermesSkillAdapter extends BaseSkillAdapter {
   /**
    * Skills that shipped with Hermes rather than being authored by the user.
    *
-   * Provenance is not recorded in one place — Hermes writes a manifest for some
-   * skills, per-skill meta files for others, and nothing at all for the rest —
-   * so four signals are combined, cheapest first:
+   * Provenance is recorded inconsistently — per-skill meta files for some
+   * skills, frontmatter for others, and nothing at all for the rest — so the
+   * rule is evidence-based rather than list-based:
    *
    *  1. A category under {@link USER_CATEGORIES} is the user's own space. This
    *     is the only signal that catches a user skill with no metadata at all
    *     (`srm-buried-point` is exactly that).
-   *  2. `_user_meta.json` — written by Hermes for an imported/created skill.
+   *  2. `_user_meta.json` — written by Hermes for an imported/created skill, and
+   *     by acm in {@link markUserOwned} on install.
    *  3. `_skillhub_meta.json` — written for a marketplace install. User-chosen,
    *     so also the user's.
    *  4. `agent_created: true` in the `SKILL.md` frontmatter — set by skills the
    *     user's agent authored.
    *
-   * Anything left over is bundled. That asymmetry is deliberate: a bundled
-   * skill wrongly kept out of the comparison is benign, whereas a bundled skill
-   * wrongly let in makes every other client look like it is missing ~100
-   * skills.
+   * Anything with none of the above is treated as bundled.
+   *
+   * This deliberately does *not* consult `.bundled_manifest`. That file is a
+   * snapshot of what one Hermes version shipped: on the machine this was
+   * written against it named 58 skills while 113 were on disk, including one
+   * name that no longer existed. Keying on it would both miss most of the
+   * catalogue and, worse, keep hiding a skill acm had just re-installed — the
+   * name stays but the skill is now the user's. The asymmetry is deliberate:
+   * a bundled skill wrongly kept out of the comparison is benign, whereas a
+   * bundled skill wrongly let in makes every other client look like it is
+   * missing ~100 skills.
    */
-  isBundledSkill(name: string): boolean {
-    const dir = this.findSkill(name);
+  isBundledSkill(name: string, knownDir?: string): boolean {
+    // Prefer the caller's path: re-resolving a name means walking the whole
+    // tree, which is quadratic when listSkills filters every skill.
+    const dir = knownDir ?? this.findSkill(name);
     if (dir === null) return false; // not on disk: nothing to exclude
 
     // The category folder is the skill's parent: <root>/<category>/<skill>.
+    // A skill sitting directly at the root has the root itself as parent, which
+    // is never a user category — so no special case is needed.
     const category = path.basename(path.dirname(dir));
     if (USER_CATEGORIES.has(category)) return false;
 
-    if (this.bundledNames === null) {
-      this.bundledNames = new Set(this.readBundledManifest());
-    }
-    if (this.bundledNames.has(name)) return true;
-
+    let entries: Set<string>;
     try {
-      const entries = new Set(fs.readdirSync(dir));
-      if (entries.has("_user_meta.json") || entries.has("_skillhub_meta.json")) {
-        return false;
-      }
-      // Note the manifest already returned true above, so reaching here means
-      // the name is absent from it — the frontmatter gets the final say.
-      return !this.declaresAgentCreated(dir);
+      entries = new Set(fs.readdirSync(dir));
     } catch {
+      return false; // unreadable: do not hide something we cannot inspect
+    }
+    if (entries.has("_user_meta.json") || entries.has("_skillhub_meta.json")) {
       return false;
     }
+    return !this.declaresAgentCreated(dir);
   }
 
   /** True when SKILL.md frontmatter carries `agent_created: true`. */
@@ -216,22 +219,5 @@ export class HermesSkillAdapter extends BaseSkillAdapter {
     } catch {
       return false;
     }
-  }
-
-  /** Read the `name:hash` manifest, tolerating a missing or malformed file. */
-  private readBundledManifest(): string[] {
-    const file = path.join(hermesHome(), "skills", ".bundled_manifest");
-    let text: string;
-    try {
-      text = fs.readFileSync(file, "utf-8");
-    } catch {
-      return []; // no manifest: fall back to the meta-file signals
-    }
-    return text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0 && !line.startsWith("#"))
-      .map((line) => line.split(":")[0].trim())
-      .filter((name) => name.length > 0);
   }
 }

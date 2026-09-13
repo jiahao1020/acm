@@ -40,11 +40,17 @@ export interface SkillAdapter {
    * than one the user owns.
    *
    * This is narrower than {@link isCatalog}: a client can mix its own bundled
-   * catalogue with user skills in one root (Hermes ships ~96 bundled skills
-   * alongside 9 user-authored ones), so exclusion has to be per skill. The
+   * catalogue with user skills in one root (Hermes ships ~99 bundled skills
+   * alongside 14 user-owned ones), so exclusion has to be per skill. The
    * client still takes part in sync in both directions — only these names are
    * hidden from the comparison, so a bundled skill never shows up as "missing"
    * from every other client.
+   *
+   * @param dir Absolute path of the skill, when the caller already knows it.
+   *   Callers that are iterating a listing should pass it: resolving the path
+   *   again means a full tree walk per skill, which on a client with a large
+   *   nested catalogue is quadratic. Optional so a caller holding only a name
+   *   still works.
    */
-  isBundledSkill?(name: string): boolean;
+  isBundledSkill?(name: string, dir?: string): boolean;
 }
