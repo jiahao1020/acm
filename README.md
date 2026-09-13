@@ -231,6 +231,29 @@ acm skill sync --update --from claude-code
 
 **Hermes 的技能目录多一层分类**：其他客户端是 `<根>/<技能>/SKILL.md`，Hermes 是 `<根>/<分类>/<技能>/SKILL.md`（如 `skills/srm-business/pangu-prod-data-fix/`）。acm 会递归一层去发现技能，安装时放进已有副本所在的分类；全新的技能则放在分类根部。删除技能只删技能目录本身，不会动分类目录。
 
+**Hermes 自带的技能默认不参与对比**：Hermes 会把自己的技能目录（实测 113 个，分布在 19 个分类下）和你的技能放在同一个根目录里，其中只有约 10 个是你自己的。若全部纳入对比，其他每个客户端都会显示「缺失约 100 个技能」，把真正的问题淹没。acm 逐个技能判定归属，只把属于自己的那些纳入 `list`/`sync`：
+
+| 判定顺序 | 依据 | 结论 |
+| --- | --- | --- |
+| 1 | 分类在 `USER_CATEGORIES` 内（默认 `srm-business`） | 你的 |
+| 2 | 目录含 `_user_meta.json` | 你的 |
+| 3 | 目录含 `_skillhub_meta.json`（市场安装） | 你的 |
+| 4 | `SKILL.md` frontmatter 有 `agent_created: true` | 你的 |
+| 5 | `.bundled_manifest` 收录其名字 | 自带 |
+| — | 以上都不满足 | 自带（保守默认） |
+
+判定顺序有讲究：分类优先，否则你放进 `srm-business/` 且没有任何元数据的技能（如 `srm-buried-point`）会被误判成自带；`.bundled_manifest` 只作为补充，因为它在版本升级间会失准（实测它收录 58 个名字，而磁盘上有 113 个技能，其中还有 1 个已不存在）。反过来「都没有 → 算自带」是刻意的：漏掉一个自带技能只是少显示一行，误判一个自带技能为你的技能则会让所有客户端看起来都缺东西。
+
+`acm skill list` 的计数会显式标出被隐藏的数量：
+
+```
+  Hermes       14 skills  (+99 bundled, hidden) C:\Users\57733\AppData\Local\hermes\skills
+```
+
+加 `--include-bundled` 可临时把自带技能也纳入对比（只读，不写任何东西）。`sync` 没有这个开关——它是写路径，自带技能绝不能被复制到别的客户端。
+
+acm 自己安装技能时会补写 `_user_meta.json`（即 `markUserOwned`），否则刚装进去的技能会立刻被判为自带而消失。若源技能已有该文件则原样保留，不覆盖。
+
 **符号链接会被解引用**：某些客户端的技能目录用符号链接指向插件仓库（如 `~/.agents/skills`），acm 复制时会把链接展开成真实文件，保证副本独立可用。
 
 **技能名以文件夹名为准**，因为 `list` / `sync` / `remove` 以及客户端自身的发现逻辑都用文件夹名。`--name` 可显式指定；只有当我们刚 clone 出来的临时目录本身就是技能时（仓库根目录即技能），文件夹名没有意义，才退回使用 SKILL.md 声明的 `name`，其次用仓库名。若 SKILL.md 声明的名字与文件夹名不一致，安装时会提示并给出跟随声明的命令。技能名不允许为空、为 `.` / `..` 或含路径分隔符——`install` 与 `remove` 都会拒绝，避免写到技能根目录之外。
@@ -239,7 +262,7 @@ acm skill sync --update --from claude-code
 
 `sync` 的选项：`-y` 跳过确认，`--client <ids>` 限定目标，`--from <ids>` 限定来源，`--update` 覆盖同名但内容不同的副本。`install` 的选项：`--name <name>` 指定技能名（多技能仓库必需），`--force` 覆盖已存在的同名技能，`--client <ids>` 限定目标。`remove` 的选项：`--dry-run` 预览将删除的路径，`-y` 跳过确认。
 
-为避免污染，**技能市场类目录（CodeBuddy 的 295 个市场技能）默认不参与差异对比和同步**，需要时用 `--all` 或 `--from codebuddy` 显式纳入。
+为避免污染，**技能市场类目录（CodeBuddy 的 295 个市场技能）整体默认不参与差异对比和同步**，需要时用 `--all` 或 `--from codebuddy` 显式纳入。这与 Hermes 的逐技能过滤是两种机制：CodeBuddy 的市场技能独占一个根目录，可以整个目录排除；Hermes 的自带技能和你的技能混在同一个根目录里，只能逐个判定。
 
 ## 开发
 

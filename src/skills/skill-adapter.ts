@@ -14,6 +14,11 @@ export interface SkillAdapter {
   getSkillsDirs(): string[];
   /** Skill names present in any of this client's skills roots. */
   listSkills(): string[];
+  /**
+   * Every skill on disk, bundled ones included.
+   * @see isBundledSkill for why the two lists differ.
+   */
+  listAllSkills?(): string[];
   /** Absolute path of an installed skill, or null. */
   findSkill(name: string): string | null;
   /**
@@ -29,4 +34,17 @@ export interface SkillAdapter {
    * catalog doesn't flood every other client.
    */
   isCatalog?(): boolean;
+
+  /**
+   * True when `name` is a skill that shipped with the client itself rather
+   * than one the user owns.
+   *
+   * This is narrower than {@link isCatalog}: a client can mix its own bundled
+   * catalogue with user skills in one root (Hermes ships ~96 bundled skills
+   * alongside 9 user-authored ones), so exclusion has to be per skill. The
+   * client still takes part in sync in both directions — only these names are
+   * hidden from the comparison, so a bundled skill never shows up as "missing"
+   * from every other client.
+   */
+  isBundledSkill?(name: string): boolean;
 }

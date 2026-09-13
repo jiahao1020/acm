@@ -39,6 +39,14 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
     return 0;
   }
 
+  /**
+   * Names the user owns, i.e. everything except skills that shipped with the
+   * client. Overridden by clients that bundle a catalogue in the same root.
+   */
+  isBundledSkill(_name: string): boolean {
+    return false;
+  }
+
   getSkillsDirs(): string[] {
     return this.skillsDirs();
   }
@@ -47,12 +55,30 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
     return fs.existsSync(this.installDir());
   }
 
-  listSkills(): string[] {
+  /**
+   * Every skill present on disk, bundled ones included.
+   *
+   * Kept separate from {@link listSkills} so the handful of callers that must
+   * see the whole tree — `remove` in particular — are not silently blinded by
+   * the comparison filter.
+   */
+  listAllSkills(): string[] {
     const names = new Set<string>();
     for (const root of this.skillsDirs()) {
       for (const n of listSkillDirsAt(root, this.depth())) names.add(n);
     }
     return [...names].sort();
+  }
+
+  /**
+   * User-owned skills — the set that participates in diffs and sync.
+   *
+   * Client-bundled skills are dropped here rather than at each call site so
+   * that "missing from every other client" never gets reported for the ~96
+   * skills Hermes ships with.
+   */
+  listSkills(): string[] {
+    return this.listAllSkills().filter((n) => !this.isBundledSkill(n));
   }
 
   findSkill(name: string): string | null {
@@ -128,6 +154,35 @@ export abstract class BaseSkillAdapter implements SkillAdapter {
     const dest = path.join(parent, name);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     copyDir(srcDir, dest);
+    this.markUserOwned(dest);
+  }
+
+  /**
+   * Record that acm installed this skill, so a client that bundles its own
+   * catalogue does not immediately re-classify it as bundled and hide it.
+   *
+   * Only clients whose {@link isBundledSkill} actually looks for the marker are
+   * affected — for everyone else this is a no-op.
+   */
+  protected markUserOwned(dest: string): void {
+    const marker = this.userOwnedMarker();
+    if (!marker) return;
+    const file = path.join(dest, marker);
+    if (fs.existsSync(file)) return;
+    try {
+      fs.writeFileSync(file, JSON.stringify({ source: "acm" }, null, 2), "utf-8");
+    } catch {
+      // A skills folder acm cannot annotate is not a reason to fail the
+      // install; the skill is on disk, which is what the user asked for.
+    }
+  }
+
+  /**
+   * Name of the provenance file this client uses to mark a skill as the user's,
+   * or null when the client does not need one.
+   */
+  protected userOwnedMarker(): string | null {
+    return null;
   }
 
   /**

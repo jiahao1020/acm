@@ -21,11 +21,28 @@ import { column } from "../utils/ui";
 const resolveTargets = (clientOpt?: string): SkillAdapter[] | null =>
   resolveClientTargets(getSelectedSkillAdapters(), clientOpt);
 
+/**
+ * Which skills a client contributes to a comparison.
+ *
+ * `listSkills()` already drops client-bundled skills; `--include-bundled`
+ * opts back in, which is what makes a bundled skill show as "missing in: …"
+ * everywhere else. Used only for inspection — nothing writes through this.
+ */
+function skillsFor(
+  client: SkillAdapter,
+  includeBundled: boolean
+): string[] {
+  return includeBundled ? client.listAllSkills?.() ?? client.listSkills() : client.listSkills();
+}
+
 /** Build skill name → set of client ids that have it. */
-function buildMatrix(clients: SkillAdapter[]): Map<string, Set<string>> {
+function buildMatrix(
+  clients: SkillAdapter[],
+  includeBundled = false
+): Map<string, Set<string>> {
   const matrix = new Map<string, Set<string>>();
   for (const client of clients) {
-    for (const name of client.listSkills()) {
+    for (const name of skillsFor(client, includeBundled)) {
       if (!matrix.has(name)) matrix.set(name, new Set());
       matrix.get(name)!.add(client.id);
     }
@@ -144,7 +161,10 @@ function locateSkillInRepo(repoDir: string, wantName?: string): string | null {
 /*  acm skill list                                                    */
 /* ------------------------------------------------------------------ */
 
-async function skillList(opts: { all?: boolean }): Promise<void> {
+async function skillList(opts: {
+  all?: boolean;
+  includeBundled?: boolean;
+}): Promise<void> {
   const clients = getSelectedSkillAdapters();
   if (clients.length === 0) {
     prompts.log.warn("No clients detected. Run `acm init` first.");
@@ -155,13 +175,22 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
   console.log(chalk.bold("\nSkill roots:\n"));
   const label = column(clients, (c) => c.displayName);
   for (const client of clients) {
-    const names = client.listSkills();
+    const names = skillsFor(client, opts.includeBundled ?? false);
     // Show the root that actually holds skills (ZCode has two)
     const dirs = client.getSkillsDirs();
     const active = dirs.find((d) => fs.existsSync(d)) ?? dirs[0];
     const tag = client.isCatalog?.() ? chalk.dim(" [catalog]") : "";
+
+    // Bundled skills are hidden by default; say so rather than letting the
+    // count look wrong against what is on disk.
+    const total = client.listAllSkills?.()?.length;
+    const hidden =
+      !opts.includeBundled && total !== undefined ? total - names.length : 0;
+    const hiddenTag =
+      hidden > 0 ? chalk.dim(` (+${hidden} bundled, hidden)`) : "";
+
     console.log(
-      `  ${label(client)} ${chalk.bold(String(names.length).padStart(3))} skills  ${chalk.dim(active)}${tag}`
+      `  ${label(client)} ${chalk.bold(String(names.length).padStart(3))} skills ${hiddenTag} ${chalk.dim(active)}${tag}`
     );
   }
 
@@ -177,7 +206,7 @@ async function skillList(opts: { all?: boolean }): Promise<void> {
   // catalog is filtered out above.
   const benchmark = compareClients.length;
 
-  const matrix = buildMatrix(compareClients);
+  const matrix = buildMatrix(compareClients, opts.includeBundled ?? false);
   if (matrix.size === 0) {
     console.log();
     prompts.log.info("No skills found in any client.");
@@ -285,6 +314,9 @@ async function skillSync(opts: {
     return;
   }
 
+  // Built from `listSkills()`, which already excludes client-bundled skills:
+  // sync is a write path, so a bundled skill must never be copied out of the
+  // client that ships it. There is deliberately no --include-bundled here.
   const matrix = buildMatrix(all);
   const missingPlan: SyncStep[] = [];
   const updatePlan: SyncStep[] = [];
@@ -635,6 +667,10 @@ export function createSkillCommand(): Command {
     .command("list")
     .description("Show skill counts and cross-client differences")
     .option("--all", "Show every differing skill, not just the first 40")
+    .option(
+      "--include-bundled",
+      "Also compare skills that ship with a client (e.g. Hermes' own catalogue)"
+    )
     .action(async (opts) => {
       await skillList(opts);
     });

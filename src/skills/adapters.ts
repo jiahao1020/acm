@@ -99,6 +99,17 @@ export class SpecSkillAdapter extends BaseSkillAdapter {
 }
 
 /**
+ * Hermes category folders that hold the user's own skills rather than Hermes'
+ * bundled catalogue.
+ *
+ * Hermes groups everything under `<root>/<category>/<skill>`, and a user skill
+ * dropped into one of these folders may carry no metadata at all — so the
+ * folder is the only thing left to key on. `srm-business` is where this user
+ * keeps their SRM skills; add their own categories here as needed.
+ */
+export const USER_CATEGORIES = new Set(["srm-business"]);
+
+/**
  * Hermes Agent's skills.
  *
  * Separate from the spec table because Hermes is the one client whose skills
@@ -108,12 +119,25 @@ export class SpecSkillAdapter extends BaseSkillAdapter {
  * wrong path here, so the class resolves its own.
  *
  * Depth is 1: `<root>/srm-business/pangu-prod-data-fix/SKILL.md`. Treating it
- * as flat would report the 17 category folders as skills and hide all 113 real
- * ones.
+ * as flat would report the category folders as skills and hide all the real
+ * ones. Depth 1 also still accepts a skill sitting directly at the root
+ * (`<root>/yuanbao/SKILL.md`), which Hermes allows; it is deliberately not 2,
+ * so the third-level skills under `mlops/evaluation/` stay out of reach.
+ *
+ * Hermes ships its own catalogue into the same root as the user's (113 skills
+ * across 19 categories on the machine this was written against, of which 10 are
+ * the user's). Letting those into the diff makes every other client look like
+ * it is missing ~100 skills, so they are excluded per skill via
+ * {@link isBundledSkill} — not via `isCatalog`, which would also stop Hermes
+ * from being a sync *source* and so make it impossible to push the user's own
+ * skills out to the other clients.
  */
 export class HermesSkillAdapter extends BaseSkillAdapter {
   id = "hermes";
   displayName = "Hermes";
+
+  /** Lazily built; one scan per process is enough. */
+  private bundledNames: Set<string> | null = null;
 
   protected skillsDirs(): string[] {
     return [path.join(hermesHome(), "skills")];
@@ -125,5 +149,89 @@ export class HermesSkillAdapter extends BaseSkillAdapter {
 
   protected depth(): number {
     return 1;
+  }
+
+  /**
+   * Hermes' own marker for a skill the user brought in. Stamping it on install
+   * is what stops acm from immediately hiding a skill it just wrote.
+   */
+  protected userOwnedMarker(): string | null {
+    return "_user_meta.json";
+  }
+
+  /**
+   * Skills that shipped with Hermes rather than being authored by the user.
+   *
+   * Provenance is not recorded in one place — Hermes writes a manifest for some
+   * skills, per-skill meta files for others, and nothing at all for the rest —
+   * so four signals are combined, cheapest first:
+   *
+   *  1. A category under {@link USER_CATEGORIES} is the user's own space. This
+   *     is the only signal that catches a user skill with no metadata at all
+   *     (`srm-buried-point` is exactly that).
+   *  2. `_user_meta.json` — written by Hermes for an imported/created skill.
+   *  3. `_skillhub_meta.json` — written for a marketplace install. User-chosen,
+   *     so also the user's.
+   *  4. `agent_created: true` in the `SKILL.md` frontmatter — set by skills the
+   *     user's agent authored.
+   *
+   * Anything left over is bundled. That asymmetry is deliberate: a bundled
+   * skill wrongly kept out of the comparison is benign, whereas a bundled skill
+   * wrongly let in makes every other client look like it is missing ~100
+   * skills.
+   */
+  isBundledSkill(name: string): boolean {
+    const dir = this.findSkill(name);
+    if (dir === null) return false; // not on disk: nothing to exclude
+
+    // The category folder is the skill's parent: <root>/<category>/<skill>.
+    const category = path.basename(path.dirname(dir));
+    if (USER_CATEGORIES.has(category)) return false;
+
+    if (this.bundledNames === null) {
+      this.bundledNames = new Set(this.readBundledManifest());
+    }
+    if (this.bundledNames.has(name)) return true;
+
+    try {
+      const entries = new Set(fs.readdirSync(dir));
+      if (entries.has("_user_meta.json") || entries.has("_skillhub_meta.json")) {
+        return false;
+      }
+      // Note the manifest already returned true above, so reaching here means
+      // the name is absent from it — the frontmatter gets the final say.
+      return !this.declaresAgentCreated(dir);
+    } catch {
+      return false;
+    }
+  }
+
+  /** True when SKILL.md frontmatter carries `agent_created: true`. */
+  private declaresAgentCreated(dir: string): boolean {
+    try {
+      const text = fs.readFileSync(path.join(dir, "SKILL.md"), "utf-8");
+      const fm = text.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+      if (!fm) return false;
+      return /^agent_created:\s*true\s*$/m.test(fm[1]);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Read the `name:hash` manifest, tolerating a missing or malformed file. */
+  private readBundledManifest(): string[] {
+    const file = path.join(hermesHome(), "skills", ".bundled_manifest");
+    let text: string;
+    try {
+      text = fs.readFileSync(file, "utf-8");
+    } catch {
+      return []; // no manifest: fall back to the meta-file signals
+    }
+    return text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"))
+      .map((line) => line.split(":")[0].trim())
+      .filter((name) => name.length > 0);
   }
 }
