@@ -1,0 +1,74 @@
+import * as fs from "fs";
+import * as path from "path";
+import { appDataDir } from "../utils/paths";
+import { readJsonFile, writeJsonFile } from "../utils/json";
+import { ClientAdapter, McpConfig, McpServerConfig } from "../types";
+
+/**
+ * Cline stores MCP settings in VS Code's globalStorage directory.
+ * Path: {APPDATA}/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json
+ */
+export class ClineAdapter implements ClientAdapter {
+  id = "cline";
+  displayName = "Cline";
+
+  private settingsDir(): string {
+    return path.join(
+      appDataDir(),
+      "Code",
+      "User",
+      "globalStorage",
+      "saoudrizwan.claude-dev",
+      "settings"
+    );
+  }
+
+  private settingsPath(): string {
+    return path.join(this.settingsDir(), "cline_mcp_settings.json");
+  }
+
+  getConfigPath(): string | null {
+    const p = this.settingsPath();
+    return fs.existsSync(p) ? p : null;
+  }
+
+  detect(): boolean {
+    // Also detect the extension directory itself (config file may not exist yet)
+    const extDir = path.join(
+      appDataDir(),
+      "Code",
+      "User",
+      "globalStorage",
+      "saoudrizwan.claude-dev"
+    );
+    if (fs.existsSync(extDir)) return true;
+    return this.getConfigPath() !== null;
+  }
+
+  readConfig(): McpConfig {
+    const p = this.getConfigPath();
+    if (!p) return { mcpServers: {} };
+    const raw = readJsonFile(p);
+    if (!raw) return { mcpServers: {} };
+    return {
+      mcpServers: (raw.mcpServers as Record<string, McpServerConfig>) ?? {},
+    };
+  }
+
+  writeConfig(config: McpConfig): void {
+    const p = this.settingsPath();
+    const dir = path.dirname(p);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    if (fs.existsSync(p)) {
+      const existing = readJsonFile(p) ?? {};
+      writeJsonFile(p, { ...existing, mcpServers: config.mcpServers });
+    } else {
+      writeJsonFile(p, { mcpServers: config.mcpServers });
+    }
+  }
+
+  supportsRemote(): boolean {
+    return true;
+  }
+}

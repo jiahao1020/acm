@@ -1,0 +1,45 @@
+{
+  "name": "acm",
+  "version": "1.0.0",
+  "description": "Agent Config Manager — sync MCP servers, API gateway config and skills across AI agent clients",
+  "main": "dist/index.js",
+  "bin": {
+    "acm": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run typecheck && tsc -p tsconfig.test.json && node --test \".test-build/test/*.test.js\"",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "agent",
+    "config",
+    "claude",
+    "cursor",
+    "cline"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@clack/prompts": "^1.8.0",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
+    "json5": "^2.2.3",
+    "smol-toml": "^1.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.2",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2"
+  }
+}
