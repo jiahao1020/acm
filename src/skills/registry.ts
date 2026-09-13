@@ -1,9 +1,12 @@
 import { SkillAdapter } from "./skill-adapter";
 import { applyClientSelection } from "../utils/acm-config";
-import { SKILL_CLIENTS, SpecSkillAdapter } from "./adapters";
+import { SKILL_CLIENTS, SpecSkillAdapter, HermesSkillAdapter } from "./adapters";
 
 export function getAllSkillAdapters(): SkillAdapter[] {
-  return SKILL_CLIENTS.map((spec) => new SpecSkillAdapter(spec));
+  return [
+    ...SKILL_CLIENTS.map((spec) => new SpecSkillAdapter(spec)),
+    new HermesSkillAdapter(),
+  ];
 }
 
 /** Every client with a skills directory (used by `acm init`). */

@@ -41,6 +41,24 @@ export function isSkillDir(dir: string): boolean {
  * Returns [] when the root does not exist.
  */
 export function listSkillDirs(skillsRoot: string): string[] {
+  return listSkillDirsAt(skillsRoot, 0);
+}
+
+/**
+ * List skills that live `depth` levels below `skillsRoot`.
+ *
+ * Most clients use `<root>/<skill>/SKILL.md` (depth 0). Hermes groups skills by
+ * category — `<root>/<category>/<skill>/SKILL.md` (depth 1) — and its root holds
+ * 17 such category folders, so a depth-0 scan would report the categories as
+ * skills and miss all 113 real ones.
+ *
+ * A folder is treated as a skill only when it is exactly at `depth` and holds a
+ * SKILL.md: a folder at the intermediate level is a grouping, not a skill, and
+ * descending further is what finds the real leaf. Recursion stops at the first
+ * recognized skill so a skill's own `references/` subfolder can never be
+ * mistaken for another skill.
+ */
+export function listSkillDirsAt(skillsRoot: string, depth: number): string[] {
   if (!fs.existsSync(skillsRoot)) return [];
   let entries: fs.Dirent[];
   try {
@@ -51,6 +69,10 @@ export function listSkillDirs(skillsRoot: string): string[] {
 
   const names: string[] = [];
   for (const entry of entries) {
+    // Hidden entries are metadata, not skills: Hermes keeps `.curator_state`,
+    // `.usage.json` and `.bundled_manifest` alongside the category folders.
+    if (entry.name.startsWith(".")) continue;
+
     const full = path.join(skillsRoot, entry.name);
     // Symlinked skill folders report as symlink; resolve before checking.
     let isDir = entry.isDirectory();
@@ -61,7 +83,13 @@ export function listSkillDirs(skillsRoot: string): string[] {
         isDir = false;
       }
     }
-    if (isDir && isSkillDir(full)) names.push(entry.name);
+    if (!isDir) continue;
+
+    if (isSkillDir(full)) {
+      names.push(entry.name);
+    } else if (depth > 0) {
+      names.push(...listSkillDirsAt(full, depth - 1));
+    }
   }
   return names.sort();
 }

@@ -1,5 +1,7 @@
 import * as path from "path";
-import { homeDir } from "../utils/paths";
+import * as fs from "fs";
+import { homeDir, hermesHome } from "../utils/paths";
+import { listSkillDirsAt } from "../utils/fs-copy";
 import { BaseSkillAdapter } from "./base-skill-adapter";
 
 /**
@@ -22,6 +24,12 @@ export interface SkillClientSpec {
   installDir?: string;
   /** Bulk catalog (e.g. a marketplace) — excluded from diffs/sync by default. */
   catalog?: boolean;
+  /**
+   * Group levels between a root and a skill. 0 (the default) is the common
+   * `<root>/<skill>/SKILL.md`; 1 is a client that groups skills into category
+   * folders, e.g. Hermes' `<root>/srm-business/<skill>/SKILL.md`.
+   */
+  depth?: number;
 }
 
 export const SKILL_CLIENTS: SkillClientSpec[] = [
@@ -81,7 +89,41 @@ export class SpecSkillAdapter extends BaseSkillAdapter {
     return path.join(homeDir(), ...parent.split("/"));
   }
 
+  protected depth(): number {
+    return this.spec.depth ?? 0;
+  }
+
   isCatalog(): boolean {
     return this.spec.catalog === true;
+  }
+}
+
+/**
+ * Hermes Agent's skills.
+ *
+ * Separate from the spec table because Hermes is the one client whose skills
+ * root is not under `$HOME` — it lives in the platform's local app-data
+ * directory — and whose layout nests skills one level deeper, inside category
+ * folders. A spec root is always joined onto `homeDir()`, which would produce a
+ * wrong path here, so the class resolves its own.
+ *
+ * Depth is 1: `<root>/srm-business/pangu-prod-data-fix/SKILL.md`. Treating it
+ * as flat would report the 17 category folders as skills and hide all 113 real
+ * ones.
+ */
+export class HermesSkillAdapter extends BaseSkillAdapter {
+  id = "hermes";
+  displayName = "Hermes";
+
+  protected skillsDirs(): string[] {
+    return [path.join(hermesHome(), "skills")];
+  }
+
+  protected installDir(): string {
+    return hermesHome();
+  }
+
+  protected depth(): number {
+    return 1;
   }
 }
